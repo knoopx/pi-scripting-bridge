@@ -1,0 +1,4 @@
+{
+  "entry": ["./index.ts"],
+  "ignorePatterns": ["**/*.test.ts", "vitest.config.ts", "node_modules/**", "coverage/**"]
+}

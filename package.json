@@ -1,0 +1,26 @@
+{
+  "name": "scripting-bridge",
+  "version": "1.0.0",
+  "description": "Consolidated Pi extension: bridges type:tool and type:hook skills from the skills tree to Pi tools and event hooks over stdin/stdout JSON payloads",
+  "scripts": {
+    "test": "vitest run --coverage",
+    "tsc": "tsc --noEmit"
+  },
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.10",
+    "typebox": "^1.1.38",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

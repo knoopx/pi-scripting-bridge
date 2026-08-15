@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# jj (Jujutsu) metadata
+.jj/
+
+# Editor dirs
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.local
+
+# Note: bun.lock is intentionally NOT ignored — Bun expects the lockfile committed.
