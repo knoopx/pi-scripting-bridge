@@ -5,11 +5,6 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 
 export const DEFAULT_SKILLS_ROOT = resolve(homedir(), ".pi/agent/skills");
-const TOOL_TIMEOUT_MS_DEFAULT = 120_000;
-/** Effective default tool timeout (ms); per-skill frontmatter `timeout` overrides. */
-export const TOOL_TIMEOUT_MS =
-  Number(process.env.PI_SCRIPTING_BRIDGE_TOOL_TIMEOUT_MS) ||
-  TOOL_TIMEOUT_MS_DEFAULT;
 export const HOOK_DEFAULT_TIMEOUT_MS = 10_000;
 export const HOOK_MAX_TIMEOUT_MS = 300_000;
 export const WATCH_DEBOUNCE_MS = 300;

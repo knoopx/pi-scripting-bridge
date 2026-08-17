@@ -16,9 +16,8 @@
  *   the stdout JSON onto AgentToolResult (`content` required, `details`
  *   defaults to {}, optional `terminate`/`addedToolNames`)
  * - Non-zero exit or invalid stdout JSON produces an error result with the
- *   script stderr surfaced in `content`; tool scripts run with a 120s
- *   timeout unless the skill frontmatter declares `timeout` (ms; 0 = no
- *   timeout)
+ *   script stderr surfaced in `content`; tool scripts run with no timeout
+ *   (long-running scripts such as delegation wrappers must not be killed)
  *
  * Hook bridge:
  * - Discovers `type: hook` skill files anywhere in the skills tree via the
@@ -187,7 +186,7 @@ function registerTool(
       ctx: ExtensionContext,
     ) => {
       state.latestCtx = ctx;
-      return executeTool(def, toolCallId, params, signal, ctx, def.timeoutMs);
+      return executeTool(def, toolCallId, params, signal, ctx);
     },
   });
   return true;

@@ -6,7 +6,7 @@
  *   fixture skills tree (PI_SCRIPTING_BRIDGE_SKILLS_ROOT)
  * - A tool script receiving the stdin JSON payload returns a JSON stdout
  *   result that maps onto AgentToolResult (content, details, defaults applied)
- * - Error paths (non-zero exit, invalid stdout JSON, timeout) produce error
+ * - Error paths (non-zero exit, invalid stdout JSON) produce error
  *   results with stderr surfaced in content
  * - Hook scripts receive {"event", "context"} on stdin and their stdout JSON
  *   maps onto the event result per the per-event combination semantics
@@ -257,8 +257,6 @@ beforeAll(async () => {
 
   writeScript("demo/scripts/bad-json.nu", ['print "this is not json"'].join("\n"));
 
-  writeScript("demo/scripts/slow.nu", ["sleep 3sec", "print '{}'"].join("\n"));
-
   writeMd(
     "demo/tools/hello.md",
     [
@@ -294,16 +292,6 @@ beforeAll(async () => {
       "type: tool",
       "description: Fixture tool that emits invalid JSON",
       `command: ${join(demoDir, "scripts/bad-json.nu")}`,
-    ].join("\n"),
-  );
-
-  writeMd(
-    "demo/tools/slow.md",
-    [
-      "name: slow",
-      "type: tool",
-      "description: Fixture tool that exceeds the tool timeout",
-      `command: ${join(demoDir, "scripts/slow.nu")}`,
     ].join("\n"),
   );
 
@@ -680,7 +668,6 @@ beforeAll(async () => {
   );
 
   process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT = fixtureRoot;
-  process.env.PI_SCRIPTING_BRIDGE_TOOL_TIMEOUT_MS = "2000";
 
   extensionModule = await import("./index");
 });
@@ -766,7 +753,6 @@ describe("scripting-bridge", () => {
       "bad-json",
       "hello",
       "loose-tool",
-      "slow",
     ]);
     // A tool in a non-standard directory is discovered purely by its `type:`.
     expect(mock.toolsByName.has("loose-tool")).toBe(true);
@@ -879,18 +865,6 @@ describe("scripting-bridge", () => {
     expect(result.details.error).toContain("invalid JSON");
     shutdownAll(mock);
   });
-
-  it("produces a timeout error result for slow tool scripts", async () => {
-    const { mock, ctx } = await startBridge((m) => m.toolsByName.has("slow"));
-
-    const result = (await runTool(mock, "slow", "call-6", {}, ctx)) as {
-      content: { text: string }[];
-      details: { timedOut: boolean };
-    };
-    expect(result.content[0].text).toContain("timed out after 2000ms");
-    expect(result.details.timedOut).toBe(true);
-    shutdownAll(mock);
-  }, 8_000);
 
   it("registers hook handlers on the 31 bridgeable events only", async () => {
     const { mock } = await startBridge(
@@ -1148,74 +1122,6 @@ describe("scripting-bridge", () => {
     // The stale probe tool must never have been registered.
     expect(mock.toolsByName.has("stale-probe")).toBe(false);
   }, 8_000);
-
-  it("timeout: 0 in frontmatter disables the tool timeout entirely", async () => {
-    const { mock, ctx } = await startBridge(
-      (m) => m.toolsByName.has("hello"),
-    );
-
-    // The suite env default is 2000ms. A 2.1s sleep script is killed under
-    // the default but must complete when frontmatter declares timeout: 0.
-    const napScript = join(demoDir, "scripts/nap.nu");
-    const napBody =
-      'sleep 2.1sec\nprint \'{"content":[{"type":"text","text":"done"}]}\'';
-    writeScript("demo/scripts/nap.nu", napBody);
-    const napNoneMd = join(fixtureRoot, "demo/tools/nap-none.md");
-    const napDefaultMd = join(fixtureRoot, "demo/tools/nap-default.md");
-    const mkMd = (path: string, name: string, extra: string) =>
-      writeFileSync(
-        path,
-        [
-          "---",
-          `name: ${name}`,
-          "type: tool",
-          "description: timeout frontmatter test",
-          `command: ${napScript}`,
-          extra,
-          "---",
-          "",
-        ].join("\n"),
-      );
-    try {
-      mkMd(napNoneMd, "nap-none", "timeout: 0");
-      mkMd(napDefaultMd, "nap-default", "");
-      await waitFor(() =>
-        mock.toolsByName.has("nap-none") && mock.toolsByName.has("nap-default"),
-      );
-
-      const rNone = (await runTool(
-        mock,
-        "nap-none",
-        "call-nt-1",
-        {},
-        ctx,
-      )) as {
-        content: { text: string }[];
-        details: { timedOut: boolean };
-      };
-      // Completed despite the 2000ms env default: timeout was disabled.
-      expect(rNone.content[0].text).toBe("done");
-      expect(rNone.details.timedOut).not.toBe(true);
-
-      const rDefault = (await runTool(
-        mock,
-        "nap-default",
-        "call-nt-2",
-        {},
-        ctx,
-      )) as {
-        content: { text: string }[];
-        details: { timedOut: boolean };
-      };
-      expect(rDefault.details.timedOut).toBe(true);
-      expect(rDefault.content[0].text).toContain("timed out after 2000ms");
-    } finally {
-      rmSync(napNoneMd, { force: true });
-      rmSync(napDefaultMd, { force: true });
-      rmSync(napScript, { force: true });
-    }
-    shutdownAll(mock);
-  }, 12_000);
 
   it("applies first-wins, replacement, and accumulate combination semantics", async () => {
     const { mock, ctx } = await startBridge(

@@ -14,7 +14,6 @@ import {
   HOOK_DEFAULT_TIMEOUT_MS,
   HOOK_MAX_TIMEOUT_MS,
   SKIP_DIRS,
-  TOOL_TIMEOUT_MS,
   type BridgeableEvent,
 } from "./constants.js";
 import type { ShellToolProperty } from "./schema.js";
@@ -32,8 +31,6 @@ export interface DiscoveredTool {
   /** Positional args forwarded to the script (trailing tokens of `command`). */
   args: string[];
   defaults: Record<string, unknown>;
-  /** Per-tool timeout in ms; 0 = no timeout (frontmatter `timeout`). */
-  timeoutMs: number;
   /** Content hash of the .md file; changes force tool re-registration. */
   fingerprint: string;
 }
@@ -124,11 +121,6 @@ async function parseToolSkill(mdPath: string): Promise<{
     return { def: null, error: script.error };
   }
 
-  const timeout = parseToolTimeout(raw.timeout);
-  if (timeout !== null && typeof timeout !== "number") {
-    return { def: null, error: timeout };
-  }
-
   const parameters =
     typeof raw.parameters === "object" && raw.parameters !== null
       ? (raw.parameters as Record<string, ShellToolProperty>)
@@ -145,28 +137,10 @@ async function parseToolSkill(mdPath: string): Promise<{
       scriptPath: script.scriptPath,
       args: script.args,
       defaults: collectDefaults(parameters),
-      timeoutMs: timeout ?? TOOL_TIMEOUT_MS,
       fingerprint: `${hashString(file.content)}:${script.scriptPath}`,
     },
     error: null,
   };
-}
-
-/**
- * Per-tool timeout (ms). Default 120s; explicit 0 disables the timeout
- * (long-running scripts such as delegation wrappers must not be killed).
- * Returns the timeout, or an error message string for invalid values.
- */
-function parseToolTimeout(
-  raw: unknown,
-): number | string | null {
-  if (raw === undefined) {
-    return null;
-  }
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
-    return `timeout must be a non-negative number of milliseconds`;
-  }
-  return Math.floor(raw);
 }
 
 function collectDefaults(

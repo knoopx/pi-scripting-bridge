@@ -33,8 +33,6 @@ Frontmatter fields:
   first file wins) and reported.
 - `description` — required.
 - `command` — required; the script to execute.
-- `timeout` — optional, milliseconds. Overrides the 120000ms default; `0`
-  disables the timeout entirely.
 - `parameters` — optional; a map of parameter name to property (`type:
   string|number|boolean|array`, `required`, plus standard constraints and
   `default`).
@@ -53,15 +51,14 @@ and must print a JSON object on stdout that maps onto the tool result:
 ```
 
 `content` (an array of text entries) is required; `details` defaults to `{}`;
-`terminate` and `addedToolNames` are optional. A non-zero exit, timeout, empty
-stdout, or invalid stdout JSON produces an error result with the script's
-stderr surfaced in `content` (plus exit code, killed/timed-out flags, stderr,
+`terminate` and `addedToolNames` are optional. Tool scripts run with no
+timeout — a long-running script simply runs until it completes. A non-zero
+exit, empty stdout, or invalid stdout JSON produces an error result with the
+script's stderr surfaced in `content` (plus exit code, killed flag, stderr,
 and stdout in `details`).
 
-Tool scripts run with the session's cwd. The default timeout is 120s,
-overridable per-skill via the frontmatter `timeout` field or globally via
-`PI_SCRIPTING_BRIDGE_TOOL_TIMEOUT_MS`. A timed-out or interrupted script is
-sent SIGTERM, escalating to SIGKILL after 5s if it does not exit.
+Tool scripts run with the session's cwd and have no timeout; an interrupted
+script is sent SIGTERM, escalating to SIGKILL after 5s if it does not exit.
 
 ### Hook skills
 
@@ -285,9 +282,6 @@ The walk skips `node_modules`, `.git`, and all other dot-directories.
 
 - `PI_SCRIPTING_BRIDGE_SKILLS_ROOT` — override the skills root (default
   `~/.pi/agent/skills`; used by the test suite).
-- `PI_SCRIPTING_BRIDGE_TOOL_TIMEOUT_MS` — override the default tool script
-  timeout in milliseconds (default 120000); per-skill frontmatter `timeout`
-  takes precedence.
 
 ## Development
 

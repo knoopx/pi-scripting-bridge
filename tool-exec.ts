@@ -39,19 +39,16 @@ export function executeTool(
   params: Record<string, unknown>,
   signal: AbortSignal | undefined,
   ctx: ExtensionContext | undefined,
-  toolTimeoutMs: number,
 ): Promise<AgentToolResult<unknown>> {
   const payload = buildToolPayload(def, toolCallId, params);
 
   return runScript(def.scriptPath, payload, {
-    timeoutMs: toolTimeoutMs,
+    // Tools have no timeout; the script runs to completion.
+    timeoutMs: 0,
     signal,
     cwd: ctx?.cwd,
     args: def.args,
   }).then((res) => {
-    if (res.timedOut) {
-      return toolErrorResult(def.name, `timed out after ${toolTimeoutMs}ms`, res);
-    }
     if (res.code !== 0) {
       return toolErrorResult(def.name, `exited with code ${res.code}`, res);
     }
