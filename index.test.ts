@@ -51,6 +51,8 @@ interface MockPi {
   notified: { msg: string; type?: string }[];
   /** When true, the api surface throws the SDK staleness assertion error. */
   stale: boolean;
+  /** Levels passed to the api surface's setThinkingLevel, in call order. */
+  thinkingCalls: string[];
 }
 
 function createMockPi(): MockPi {
@@ -63,6 +65,7 @@ function createMockPi(): MockPi {
   const active = new Set<string>();
   const activeSetCalls: string[][] = [];
   const notified: { msg: string; type?: string }[] = [];
+  const thinkingCalls: string[] = [];
 
   const mock: MockPi = {
     api: null as unknown as ExtensionAPI,
@@ -73,6 +76,7 @@ function createMockPi(): MockPi {
     activeSetCalls,
     notified,
     stale: false,
+    thinkingCalls,
   };
 
   const guard = (): void => {
@@ -118,6 +122,10 @@ function createMockPi(): MockPi {
         if (!names.includes(n)) active.delete(n);
       }
       for (const n of names) active.add(n);
+    },
+    setThinkingLevel(level: string) {
+      guard();
+      thinkingCalls.push(level);
     },
   } as unknown as ExtensionAPI;
 
@@ -1252,5 +1260,161 @@ describe("scripting-bridge", () => {
       ),
     ).toBeUndefined();
     shutdownAll(mock);
+  }, 8_000);
+
+  // ---------------------------------------------------------------------
+  // setThinkingLevel directive
+  // ---------------------------------------------------------------------
+
+  /**
+   * Boot the bridge against an ISOLATED skills root (env override, like
+   * the empty-tree test) containing only the given hook fixtures, and
+   * wait for the hook handlers to be registered.
+   */
+  async function bootWithHooks(hooks: {
+    event: string;
+    script: string;
+  }[]): Promise<{
+    mock: MockPi;
+    ctx: ExtensionContext;
+    root: string;
+    savedRoot: string | undefined;
+  }> {
+    const root = mkdtempSync(join(tmpdir(), "scripting-bridge-think-"));
+    const savedRoot = process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT;
+    process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT = root;
+    const hooksDir = join(root, "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    for (let i = 0; i < hooks.length; i++) {
+      const spec = hooks[i];
+      const scriptPath = join(hooksDir, `hook-${i}.nu`);
+      writeFileSync(scriptPath, `#!/usr/bin/env nu\n${spec.script}\n`);
+      chmodSync(scriptPath, 0o755);
+      writeFileSync(
+        join(hooksDir, `hook-${i}.md`),
+        [
+          "---",
+          `name: hook-${i}`,
+          "type: hook",
+          `event: ${spec.event}`,
+          `command: ${scriptPath}`,
+          "description: setThinkingLevel fixture",
+          "---",
+          "",
+        ].join("\n"),
+      );
+    }
+    const mock = createMockPi();
+    try {
+      await extensionModule!.default(mock.api);
+      const ctx = createMockCtx(root, mock.notified);
+      fireEvent(
+        mock,
+        "session_start",
+        { type: "session_start", reason: "startup" },
+        ctx,
+      );
+      await waitFor(() =>
+        hooks.every((h) => (mock.events.get(h.event) ?? []).length > 0),
+      );
+      return { mock, ctx, root, savedRoot };
+    } catch (err) {
+      process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT = savedRoot;
+      rmSync(root, { recursive: true, force: true });
+      throw err;
+    }
+  }
+
+  function cleanupBooted(
+    booted: {
+      mock: MockPi;
+      root: string;
+      savedRoot: string | undefined;
+    },
+  ): void {
+    shutdownAll(booted.mock);
+    process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT = booted.savedRoot;
+    rmSync(booted.root, { recursive: true, force: true });
+  }
+
+  it("applies a hook setThinkingLevel directive on a no-result event exactly once", async () => {
+    const booted = await bootWithHooks([
+      { event: "turn_end", script: 'print ({setThinkingLevel: "low"} | to json)' },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      // turn_end is a no-result event: the combined result is discarded,
+      // but the directive is still applied in-process.
+      await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
+      expect(mock.thinkingCalls).toEqual(["low"]);
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("logs and ignores an invalid setThinkingLevel directive (API not called)", async () => {
+    const booted = await bootWithHooks([
+      { event: "turn_end", script: 'print ({setThinkingLevel: "ultra"} | to json)' },
+    ]);
+    const { mock, ctx } = booted;
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map((a) => (a instanceof Error ? a.message : String(a))).join(" "));
+    };
+    try {
+      await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
+      expect(mock.thinkingCalls).toHaveLength(0);
+      expect(
+        errors.some(
+          (m) =>
+            m.includes("invalid thinkingLevel directive") &&
+            m.includes("\"ultra\""),
+        ),
+      ).toBe(true);
+    } finally {
+      console.error = origError;
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("strips the setThinkingLevel key from combined result payloads", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "before_provider_request",
+        script: 'print ({setThinkingLevel: "xhigh", body: "p"} | to json)',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(
+        mock,
+        "before_provider_request",
+        { type: "before_provider_request" },
+        ctx,
+      );
+      // The replacement payload carries the other keys but never the
+      // directive key.
+      expect(result).toEqual({ body: "p" });
+      expect(result).not.toHaveProperty("setThinkingLevel");
+      expect(mock.thinkingCalls).toEqual(["xhigh"]);
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("applies multiple setThinkingLevel directives in hook run order (last valid wins)", async () => {
+    const booted = await bootWithHooks([
+      { event: "turn_end", script: 'print ({setThinkingLevel: "low"} | to json)' },
+      { event: "turn_end", script: 'print ({setThinkingLevel: "high"} | to json)' },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
+      // Both calls happen, in hook run order; the last valid level wins.
+      expect(mock.thinkingCalls).toEqual(["low", "high"]);
+    } finally {
+      cleanupBooted(booted);
+    }
   }, 8_000);
 });

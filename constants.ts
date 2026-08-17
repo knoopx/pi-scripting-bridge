@@ -53,6 +53,12 @@ export const BRIDGEABLE_EVENTS = [
 export type BridgeableEvent = (typeof BRIDGEABLE_EVENTS)[number];
 
 /**
+ * The canonical `setThinkingLevel` directive levels; mirrors the levels
+ * accepted by the Extension API's `setThinkingLevel` method.
+ */
+export const THINKING_LEVELS = ["off","minimal","low","medium","high","xhigh","max"] as const;
+
+/**
  * Events whose hook results carry no return value: their handlers are
  * invoked for side effects only and always contribute `undefined`.
  */

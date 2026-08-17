@@ -31,6 +31,13 @@
  *   field-wise merge, accumulation, replacement)
  * - 31 of the 33 events are bridgeable; `message_update` and
  *   `tool_execution_update` stay TS-only and are never registered
+ * - A hook may emit a top-level `setThinkingLevel` directive whose value
+ *   is one of THINKING_LEVELS (off, minimal, low, medium, high, xhigh,
+ *   max); the bridge applies it in-process via the Extension API, also
+ *   on no-result events (session_start, turn_end) where the combined
+ *   result is otherwise discarded. Invalid levels are logged and
+ *   ignored. The directive key is stripped from the hook's value before
+ *   result combination, so it never leaks into combined result payloads
  * - Empty script output is a no-op; script failures are logged and treated
  *   as no-op (fail-open)
  *
@@ -53,6 +60,7 @@ import type {
 import {
   BRIDGEABLE_EVENTS,
   DEFAULT_SKILLS_ROOT,
+  THINKING_LEVELS,
   type BridgeableEvent,
 } from "./constants.js";
 import type { DiscoveredHook, DiscoveredTool } from "./discovery.js";
@@ -254,7 +262,55 @@ function processHookOutput(
   return { skip: false, value: value as Record<string, unknown> };
 }
 
+/**
+ * Apply the optional `setThinkingLevel` directive from a hook's output and
+ * strip the directive key from the value. An invalid level is logged and
+ * ignored (the API is not called). A staleness error from the API call
+ * tears the instance down; any other error is logged. The returned value
+ * never carries the directive key, so it cannot leak into combined
+ * result payloads.
+ */
+function applyThinkingLevelDirective(
+  pi: ExtensionAPI,
+  state: BridgeState,
+  hook: DiscoveredHook,
+  event: BridgeableEvent,
+  value: Record<string, unknown>,
+  ctx: ExtensionContext,
+): Record<string, unknown> {
+  const rest: Record<string, unknown> = { ...value };
+  if (!("setThinkingLevel" in value)) {
+    return value;
+  }
+  const level = value.setThinkingLevel;
+  delete rest.setThinkingLevel;
+  if (
+    typeof level !== "string" ||
+    !(THINKING_LEVELS as readonly string[]).includes(level)
+  ) {
+    logFailure(
+      `scripting-bridge: hook '${hook.name}' (${event}) set an invalid thinkingLevel directive: ${JSON.stringify(value)}`,
+      ctx,
+    );
+    return rest;
+  }
+  try {
+    pi.setThinkingLevel(level as (typeof THINKING_LEVELS)[number]);
+  } catch (err) {
+    if (isStaleError(err)) {
+      teardownStale(state, ctx);
+    } else {
+      logFailure(
+        `scripting-bridge: hook '${hook.name}' (${event}) setThinkingLevel failed: ${err instanceof Error ? err.message : String(err)}`,
+        ctx,
+      );
+    }
+  }
+  return rest;
+}
+
 async function runEventHooks(
+  pi: ExtensionAPI,
   state: BridgeState,
   event: BridgeableEvent,
   eventObj: unknown,
@@ -285,7 +341,15 @@ async function runEventHooks(
     if (step.skip) {
       continue;
     }
-    const outcome = combineResult(event, acc, step.value!, sanitizedEvent);
+    const value = applyThinkingLevelDirective(
+      pi,
+      state,
+      hook,
+      event,
+      step.value!,
+      ctx,
+    );
+    const outcome = combineResult(event, acc, value, sanitizedEvent);
     acc = outcome.value;
     stop = outcome.stop;
   }
@@ -307,7 +371,7 @@ function registerHookHandlers(pi: ExtensionAPI, state: BridgeState): void {
   for (const eventName of BRIDGEABLE_EVENTS) {
     onAny(eventName, (event, ctx) => {
       state.latestCtx = ctx;
-      return runEventHooks(state, eventName, event, ctx);
+      return runEventHooks(pi, state, eventName, event, ctx);
     });
   }
 }
