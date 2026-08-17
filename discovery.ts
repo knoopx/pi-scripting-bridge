@@ -1,8 +1,11 @@
 /**
  * Skill discovery: a single recursive walk of the skills tree in which the
  * frontmatter `type:` field — never the file's directory — decides
- * registration. `type: tool` and `type: agent` register as bridge tools
- * (agents are spawn-agent wrappers); `type: hook` registers as an event hook.
+ * registration. `type: tool` registers as a bridge tool; `type: hook`
+ * registers as an event hook. `type: agent` files are regular tools
+ * (invoked via the `spawn-agent` tool); they are outside this extension's
+ * auto-registration set because they resolve to the shared `spawn-agent.nu`
+ * command rather than a per-skill script.
  */
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -103,9 +106,9 @@ async function parseToolSkill(mdPath: string): Promise<{
   }
 
   const raw = file.data;
-  // The frontmatter `type:` is authoritative: both `tool` and `agent` skills
-  // register as bridge tools (agents are spawn-agent wrappers).
-  if (raw.type !== "tool" && raw.type !== "agent") {
+  // The frontmatter `type:` is authoritative: only `tool` skills register as
+  // bridge tools.
+  if (raw.type !== "tool") {
     return { def: null, error: null };
   }
 
@@ -151,7 +154,7 @@ async function parseToolSkill(mdPath: string): Promise<{
 
 /**
  * Per-tool timeout (ms). Default 120s; explicit 0 disables the timeout
- * (spawn-agent wrappers run full agent sessions and must not be killed).
+ * (long-running scripts such as delegation wrappers must not be killed).
  * Returns the timeout, or an error message string for invalid values.
  */
 function parseToolTimeout(
@@ -182,7 +185,7 @@ export async function discoverTools(root: string): Promise<ToolDiscovery> {
   const tools = new Map<string, DiscoveredTool>();
   const skipped: { name: string; error: string }[] = [];
 
-  // Single recursive walk; the frontmatter `type:` (tool | agent) decides
+  // Single recursive walk; the frontmatter `type: tool` decides
   // registration, independent of where the file lives.
   for (const mdPath of (await walkMdFiles(root)).sort()) {
     const { def, error } = await parseToolSkill(mdPath);
@@ -191,7 +194,7 @@ export async function discoverTools(root: string): Promise<ToolDiscovery> {
       continue;
     }
     if (def === null) {
-      continue; // not a type: tool/agent skill
+      continue; // not a type: tool skill
     }
     if (tools.has(def.name)) {
       skipped.push({

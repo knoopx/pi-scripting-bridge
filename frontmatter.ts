@@ -1,7 +1,7 @@
 /**
  * Shared skill-file parsing primitives: YAML frontmatter extraction and
- * `command` script resolution. Tool and agent skills share the frontmatter
- * shape; tool/agent/hook skills all resolve `command` with the same
+ * `command` script resolution. Tool and hook skills share the frontmatter
+ * shape; tool/hook skills all resolve `command` with the same
  * convention (absolute as-is, relative against the skill file's directory).
  */
 import { access, constants, readdir, stat } from "node:fs/promises";

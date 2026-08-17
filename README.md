@@ -4,8 +4,14 @@ A Pi extension that bridges executable skills from the skills tree to the Pi
 runtime over a stdin/stdout JSON payload protocol. A single recursive walk of
 the skills tree classifies every `.md` file by its frontmatter `type:`:
 
-- `type: tool` or `type: agent` — registered as a Pi tool
+- `type: tool` — registered as a Pi tool
 - `type: hook` — registered as a handler for one Pi event
+- `type: agent` — a regular tool with tool-shaped frontmatter (command,
+  parameters, timeout, exclude-tools); invoked by name via the `spawn-agent`
+  tool. The scripting-bridge's auto-registration path targets `type: tool`
+  and `type: hook` skill files; agent skills are not in that set because they
+  resolve to the shared `spawn-agent.nu` command rather than a per-skill
+  script.
 
 The frontmatter `type:` is the only discriminator; the file's directory is not
 consulted, so a skill is discovered wherever it lives in the tree.
@@ -17,12 +23,11 @@ script referenced by `command`. `command` may be an absolute path or relative
 to the skill file's directory (never the process cwd). The script must exist
 and be executable; otherwise the skill is skipped and the skip is reported.
 
-### Tool and agent skills
+### Tool skills
 
 Frontmatter fields:
 
-- `type` — `tool` or `agent`. Agent skills are spawn-agent wrappers; they
-  register as tools and conventionally declare `timeout: 0` (no timeout).
+- `type` — `tool`.
 - `name` — optional; the tool name. Falls back to the `.md` basename (spaces
   replaced with underscores, lowercased). Duplicate names are skipped (the
   first file wins) and reported.
@@ -96,11 +101,15 @@ A hook prints a JSON object on stdout; when several hooks subscribe to the
 same event they run in sorted-filename order and their results are combined
 per the event's semantics:
 
-- cancel short-circuit: `session_before_switch`, `session_before_fork`,
-  `session_before_compact`, `session_before_tree`
+- cancel short-circuit: `session_before_switch`, `session_before_compact`
+- first-defined wins per key: `session_before_fork` (`skipConversationRestore`),
+  `session_before_tree` (`summary`, `customInstructions`,
+  `replaceInstructions`, `label`)
 - first-wins: `project_trust`, `user_bash`, `tool_call`
 - chaining, last wins: `context`, `before_provider_request`, `message_end`,
   `input`
+- `before_agent_start`: `message` is first-defined (a single handler result
+  carries one message); `systemPrompt` chains, last-defined wins
 - accumulation: `resources_discover`
 - field-wise merge: `tool_result`
 - no result consumed: `session_start`, `session_info_changed`,
@@ -115,20 +124,18 @@ timeout) is logged and treated as a no-op (fail-open).
 
 ## Example Implementations
 
-Three skills that actually run in the default skills root
-(`~/.pi/agent/skills`), one per type. All frontmatter fields and scripts
+Two skills that actually run in the default skills root
+(`~/.pi/agent/skills`), one per registered type. All frontmatter fields and
+scripts
 below are taken verbatim from these files:
 
 ```
 ~/.pi/agent/skills/
-├── engineering/
-│   ├── tools/duckdb-eval.md     # tool
-│   │   └── duckdb-eval.nu
-│   └── hooks/nu-check.md        # hook
-│       └── nu-check.nu
-└── meta/agents/
-    ├── content-authoring.md     # agent
-    └── content-authoring.nu
+└── engineering/
+    ├── tools/duckdb-eval.md     # tool
+    │   └── duckdb-eval.nu
+    └── hooks/nu-check.md        # hook
+        └── nu-check.nu
 ```
 
 Only `type`, `name`, `description`, `command`, `timeout`, and
@@ -147,8 +154,8 @@ name: duckdb-eval
 type: tool
 command: /home/knoopx/.pi/agent/skills/engineering/tools/duckdb-eval.nu
 description: Evaluate DuckDB SQL code inline.
-category: Tool
-subcategory: Eval
+category: Engineering
+subcategory: DuckDB
 keywords: duckdb, sql, eval
 related: duckdb-engineer
 parameters:
@@ -207,72 +214,6 @@ result, i.e. the DuckDB table plus status details:
 }
 ```
 
-### Agent Skill: `content-authoring`
-
-```markdown
-# ~/.pi/agent/skills/meta/agents/content-authoring.md
----
-name: content-authoring
-type: agent
-timeout: 0
-command: /home/knoopx/.pi/agent/skills/meta/agents/content-authoring.nu
-description: Writes blog posts, drafts emails, produces documentation, proofreads prose, and curates news records.
-category: Meta
-subcategory: Agent
-parameters:
-  task:
-    type: string
-    description: Task description to execute
-    required: true
-keywords: agent, blog, email, documentation, writing, proofreading, prose, news
-related: orchestration
-
----
-
-Write blog posts, draft emails, produce project documentation, proofread
-and edit prose, curate and persist news records, and handle any writing
-or document-related task.
-
-…(full agent instructions in the file)
-```
-
-```bash
-# ~/.pi/agent/skills/meta/agents/content-authoring.nu (chmod 755)
-#!/usr/bin/env nu
-
-# content-authoring — spawn-agent wrapper (stdin/stdout JSON payload protocol).
-# stdin:  {"toolCallId": "...", "params": {"task": "..."}} (scripting-bridge payload)
-# stdout: AgentToolResult JSON: {"content": [{"type": "text", "text": "..."}]}
-
-def main [] {
-    let payload = (^cat | from json)
-    let task = $payload.params.task
-    let home = ($nu.home-dir)
-    let spawn = ($home | path join ".pi" "agent" "skills" "orchestration" "scripts" "spawn-agent.nu")
-    let system_md = ($home | path join ".pi" "agent" "skills" "meta" "agents" "content-authoring.md")
-    let res = (^$spawn --agent content-authoring --task $task --tools "read,write,edit,bash,fetch-web,duckdb-eval,python-eval" --system-prompt $system_md | complete)
-    if ($res.exit_code != 0) {
-        let err = ($res.stderr | str trim)
-        let text = if $err != "" { $"[error] spawn-agent exited with code ($res.exit_code): ($err)" } else { $"[error] spawn-agent exited with code ($res.exit_code)" }
-        { content: [{ type: "text", text: $text }], details: { exit_code: $res.exit_code } } | to json
-    } else {
-        let out = ($res.stdout | str trim)
-        if ($out | is-empty) {
-            { content: [{ type: "text", text: "[error] spawn-agent produced no output" }], details: { exit_code: 0 } } | to json
-        } else {
-            { content: [{ type: "text", text: $out }], details: { exit_code: 0 } } | to json
-        }
-    }
-}
-```
-
-Produces: registered as a tool named `content-authoring` with `timeout: 0`
-(disables the timeout, so the wrapper can run a full agent session);
-invoking it with `task: "..."` spawns `spawn-agent.nu --agent
-content-authoring --task <task> --tools read,write,edit,bash,fetch-web,
-duckdb-eval,python-eval --system-prompt content-authoring.md` and returns
-the spawned agent's last text response as an AgentToolResult.
-
 ### Hook Skill: `nu-check`
 
 ```markdown
@@ -284,8 +225,8 @@ event: tool_result
 timeout: 10000
 command: /home/knoopx/.pi/agent/skills/engineering/hooks/nu-check.nu
 description: Syntax-checks edited nushell files with `nu --ide-check` and surfaces diagnostics.
-category: Hooks
-subcategory: Check
+category: Engineering
+subcategory: Nushell
 keywords: nu-check, nushell, syntax, ide-check, tool_result, write, edit, nu
 related: prettier, shfmt, alejandra
 ---

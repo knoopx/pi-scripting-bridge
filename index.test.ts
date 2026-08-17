@@ -331,7 +331,7 @@ beforeAll(async () => {
     [
       "name: runner-agent",
       "type: agent",
-      "description: Spawn-agent wrapper fixture, registered by its agent type",
+      "description: Agent-type fixture; the bridge must not register it",
       `command: ${join(demoDir, "scripts/runner-agent.nu")}`,
       "parameters:",
       "  task:",
@@ -757,7 +757,7 @@ describe("scripting-bridge", () => {
     }
   });
 
-  it("discovers type:tool and type:agent skills anywhere in the tree on session_start", async () => {
+  it("discovers type:tool skills anywhere in the tree on session_start", async () => {
     const { mock } = await startBridge((m) => m.toolsByName.has("hello"));
 
     expect([...mock.toolsByName.keys()].sort()).toEqual([
@@ -766,13 +766,15 @@ describe("scripting-bridge", () => {
       "bad-json",
       "hello",
       "loose-tool",
-      "runner-agent",
       "slow",
     ]);
     // A tool in a non-standard directory is discovered purely by its `type:`.
     expect(mock.toolsByName.has("loose-tool")).toBe(true);
     // The non-tool skill file must not be registered.
     expect(mock.toolsByName.has("not-a-tool")).toBe(false);
+    // type: agent skill files are skipped during tool discovery (agents are
+    // regular tools invoked via the spawn-agent tool).
+    expect(mock.toolsByName.has("runner-agent")).toBe(false);
 
     // Parameter schema generation: greeting required, punctuation optional.
     const helloParams = mock.toolsByName.get("hello")!.parameters as {
@@ -824,21 +826,12 @@ describe("scripting-bridge", () => {
     shutdownAll(mock);
   });
 
-  it("maps agents-dir tools with their own parameters", async () => {
-    const { mock, ctx } = await startBridge((m) => m.toolsByName.has("runner-agent"));
+  it("skips type:agent skill files during tool discovery", async () => {
+    const { mock } = await startBridge((m) => m.toolsByName.has("hello"));
 
-    const result = (await runTool(
-      mock,
-      "runner-agent",
-      "call-3",
-      { task: "do the thing" },
-      ctx,
-    )) as {
-      content: { text: string }[];
-      details: { task: string };
-    };
-    expect(result.content[0].text).toBe("agent ran: do the thing");
-    expect(result.details.task).toBe("do the thing");
+    // The demo/agents/runner-agent.md fixture (type: agent) must be skipped:
+    // the bridge's discovery gate targets type: tool and type: hook only.
+    expect(mock.toolsByName.has("runner-agent")).toBe(false);
     shutdownAll(mock);
   });
 

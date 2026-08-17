@@ -1,8 +1,8 @@
 /**
  * scripting-bridge — Pi extension entry point.
  *
- * Bridges `type: tool`, `type: agent`, and `type: hook` skills from the
- * skills tree to Pi tools and event hooks over stdin/stdout JSON payloads.
+ * Bridges `type: tool` and `type: hook` skills from the skills tree to Pi
+ * tools and event hooks over stdin/stdout JSON payloads.
  *
  * Module layout:
  * - `constants.ts`     — timeouts, skills root, the 31 bridgeable events

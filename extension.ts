@@ -2,10 +2,12 @@
  * scripting-bridge — consolidated Pi extension owning the script surface.
  *
  * Tool bridge:
- * - Discovers `type: tool` and `type: agent` skill files anywhere in the
- *   skills tree via a single recursive walk. The frontmatter `type:` field
- *   is authoritative — the file's directory is not consulted to decide its
- *   role.
+ * - Discovers `type: tool` skill files anywhere in the skills tree via a
+ *   single recursive walk. The frontmatter `type:` field is authoritative —
+ *   the file's directory is not consulted to decide its role. (`type: agent`
+ *   files are regular tools invoked via the `spawn-agent` tool; they are
+ *   outside this extension's auto-registration set because they resolve to
+ *   the shared `spawn-agent.nu` command.)
  * - Registers each as a Pi tool (executionMode "sequential") with a TypeBox
  *   parameter schema generated from the skill's `parameters` field
  *   (ShellToolProperty format, `required: true/false`)
