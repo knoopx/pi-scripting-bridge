@@ -53,6 +53,13 @@ export const BRIDGEABLE_EVENTS = [
 export type BridgeableEvent = (typeof BRIDGEABLE_EVENTS)[number];
 
 /**
+ * Top-level directive keys that a hook may emit in its stdout JSON. The
+ * bridge applies each in-process via the Extension API and strips the key
+ * from the combined result so it never leaks into event result payloads.
+ */
+export const HOOK_DIRECTIVE_KEYS = ["setThinkingLevel", "sendMessage"] as const;
+
+/**
  * The canonical `setThinkingLevel` directive levels; mirrors the levels
  * accepted by the Extension API's `setThinkingLevel` method.
  */

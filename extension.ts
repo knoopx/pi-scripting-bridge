@@ -309,6 +309,50 @@ function applyThinkingLevelDirective(
   return rest;
 }
 
+/**
+ * Apply the optional `sendMessage` directive from a hook's output and
+ * strip the directive key from the value. An invalid value (present but
+ * not a non-null object) is logged and the API is not called. A staleness
+ * error from the API call tears the instance down; any other error is
+ * logged. The returned value never carries the directive key, so it
+ * cannot leak into combined result payloads.
+ */
+function applySendMessageDirective(
+  pi: ExtensionAPI,
+  state: BridgeState,
+  hook: DiscoveredHook,
+  event: BridgeableEvent,
+  value: Record<string, unknown>,
+  ctx: ExtensionContext,
+): Record<string, unknown> {
+  if (!("sendMessage" in value)) {
+    return value;
+  }
+  const rest: Record<string, unknown> = { ...value };
+  const msg = value.sendMessage;
+  delete rest.sendMessage;
+  if (typeof msg !== "object" || msg === null) {
+    logFailure(
+      `scripting-bridge: hook '${hook.name}' (${event}) set an invalid sendMessage directive: ${JSON.stringify(value)}`,
+      ctx,
+    );
+    return rest;
+  }
+  try {
+    pi.sendMessage(msg as Parameters<ExtensionAPI["sendMessage"]>[0]);
+  } catch (err) {
+    if (isStaleError(err)) {
+      teardownStale(state, ctx);
+    } else {
+      logFailure(
+        `scripting-bridge: hook '${hook.name}' (${event}) sendMessage failed: ${err instanceof Error ? err.message : String(err)}`,
+        ctx,
+      );
+    }
+  }
+  return rest;
+}
+
 async function runEventHooks(
   pi: ExtensionAPI,
   state: BridgeState,
@@ -341,12 +385,12 @@ async function runEventHooks(
     if (step.skip) {
       continue;
     }
-    const value = applyThinkingLevelDirective(
+    const value = applySendMessageDirective(
       pi,
       state,
       hook,
       event,
-      step.value!,
+      applyThinkingLevelDirective(pi, state, hook, event, step.value!, ctx),
       ctx,
     );
     const outcome = combineResult(event, acc, value, sanitizedEvent);

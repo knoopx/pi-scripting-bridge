@@ -53,6 +53,8 @@ interface MockPi {
   stale: boolean;
   /** Levels passed to the api surface's setThinkingLevel, in call order. */
   thinkingCalls: string[];
+  /** Messages passed to the api surface's sendMessage, in call order. */
+  sendMessageCalls: unknown[];
 }
 
 function createMockPi(): MockPi {
@@ -66,6 +68,7 @@ function createMockPi(): MockPi {
   const activeSetCalls: string[][] = [];
   const notified: { msg: string; type?: string }[] = [];
   const thinkingCalls: string[] = [];
+  const sendMessageCalls: unknown[] = [];
 
   const mock: MockPi = {
     api: null as unknown as ExtensionAPI,
@@ -77,6 +80,7 @@ function createMockPi(): MockPi {
     notified,
     stale: false,
     thinkingCalls,
+    sendMessageCalls,
   };
 
   const guard = (): void => {
@@ -126,6 +130,10 @@ function createMockPi(): MockPi {
     setThinkingLevel(level: string) {
       guard();
       thinkingCalls.push(level);
+    },
+    sendMessage(msg: unknown) {
+      guard();
+      sendMessageCalls.push(msg);
     },
   } as unknown as ExtensionAPI;
 
@@ -1413,6 +1421,84 @@ describe("scripting-bridge", () => {
       await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
       // Both calls happen, in hook run order; the last valid level wins.
       expect(mock.thinkingCalls).toEqual(["low", "high"]);
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  // ---------------------------------------------------------------------
+  // sendMessage directive
+  // ---------------------------------------------------------------------
+
+  it("applies a hook sendMessage directive on a no-result event exactly once", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "agent_end",
+        script: 'print ({sendMessage: {customType: "x", content: "hi", display: true}} | to json)',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      // agent_end is a no-result event: the combined result is discarded,
+      // but the directive is still applied in-process.
+      await fireFirstHandler(mock, "agent_end", { type: "agent_end" }, ctx);
+      expect(mock.sendMessageCalls).toHaveLength(1);
+      expect(mock.sendMessageCalls[0]).toEqual({
+        customType: "x",
+        content: "hi",
+        display: true,
+      });
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("logs and strips an invalid sendMessage directive (API not called)", async () => {
+    const booted = await bootWithHooks([
+      { event: "agent_end", script: 'print ({sendMessage: "not-an-object"} | to json)' },
+    ]);
+    const { mock, ctx } = booted;
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map((a) => (a instanceof Error ? a.message : String(a))).join(" "));
+    };
+    try {
+      await fireFirstHandler(mock, "agent_end", { type: "agent_end" }, ctx);
+      expect(mock.sendMessageCalls).toHaveLength(0);
+      expect(
+        errors.some(
+          (m) =>
+            m.includes("invalid sendMessage directive") &&
+            m.includes("not-an-object"),
+        ),
+      ).toBe(true);
+    } finally {
+      console.error = origError;
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("strips the sendMessage key from combined result payloads", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "before_provider_request",
+        script: 'print ({sendMessage: {customType: "x", content: "hi", display: true}, body: "p"} | to json)',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(
+        mock,
+        "before_provider_request",
+        { type: "before_provider_request" },
+        ctx,
+      );
+      // The replacement payload carries the other keys but never the
+      // directive key.
+      expect(result).toEqual({ body: "p" });
+      expect(result).not.toHaveProperty("sendMessage");
+      expect(mock.sendMessageCalls).toHaveLength(1);
     } finally {
       cleanupBooted(booted);
     }
