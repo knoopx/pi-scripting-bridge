@@ -1503,4 +1503,146 @@ describe("scripting-bridge", () => {
       cleanupBooted(booted);
     }
   }, 8_000);
+
+  // ---------------------------------------------------------------------
+  // Hook execution visibility
+  // ---------------------------------------------------------------------
+
+  it("emits an info notification listing applied directives on success", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "before_provider_request",
+        script: 'print ({setThinkingLevel: "xhigh", sendMessage: {customType: "x", content: "hi", display: true}, body: "p"} | to json)',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(
+        mock,
+        "before_provider_request",
+        { type: "before_provider_request" },
+        ctx,
+      );
+      expect(result).toEqual({ body: "p" });
+      expect(mock.thinkingCalls).toEqual(["xhigh"]);
+      expect(mock.sendMessageCalls).toHaveLength(1);
+      // The success line lists both applied directive keys and the result.
+      const line = mock.notified.find(
+        (n) => n.msg.includes("hook 'hook-0' (before_provider_request)"),
+      );
+      expect(line).toBeDefined();
+      expect(line!.type).toBe("info");
+      expect(line!.msg).toContain("setThinkingLevel=xhigh");
+      expect(line!.msg).toContain("sendMessage");
+      expect(line!.msg).toContain("result applied");
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("emits an info no-op notification for empty hook output", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "turn_end",
+        // Prints nothing: the empty-stdout branch resolves as a no-op.
+        script: 'if false { print "x" }',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
+      expect(result).toBeUndefined();
+      const line = mock.notified.find((n) => n.msg.includes("no-op"));
+      expect(line).toBeDefined();
+      expect(line!.type).toBe("info");
+      expect(line!.msg).toContain("hook 'hook-0' (turn_end)");
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("emits a warning notification when a hook fails", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "turn_end",
+        script: 'print -e "boom"\nexit 1',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
+      expect(result).toBeUndefined();
+      const line = mock.notified.find((n) => n.msg.includes("failed (exit 1)"));
+      expect(line).toBeDefined();
+      expect(line!.type).toBe("warning");
+      expect(line!.msg).toContain("hook 'hook-0' (turn_end)");
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("emits an info result-applied notification for a combined result", async () => {
+    const booted = await bootWithHooks([
+      {
+        event: "before_provider_request",
+        script: 'print ({body: "p"} | to json)',
+      },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(
+        mock,
+        "before_provider_request",
+        { type: "before_provider_request" },
+        ctx,
+      );
+      expect(result).toEqual({ body: "p" });
+      const line = mock.notified.find((n) => n.msg.includes("result applied"));
+      expect(line).toBeDefined();
+      expect(line!.type).toBe("info");
+      expect(line!.msg).toContain("hook 'hook-0' (before_provider_request)");
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("emits an info chain-stop notification when a hook stops the chain", async () => {
+    const booted = await bootWithHooks([
+      { event: "project_trust", script: 'print ({trusted: true} | to json)' },
+    ]);
+    const { mock, ctx } = booted;
+    try {
+      const result = await fireFirstHandler(
+        mock,
+        "project_trust",
+        { type: "project_trust" },
+        ctx,
+      );
+      expect(result).toEqual({ trusted: true });
+      const line = mock.notified.find((n) => n.msg.includes("chain stopped after"));
+      expect(line).toBeDefined();
+      expect(line!.type).toBe("info");
+      expect(line!.msg).toContain("event 'project_trust': chain stopped after 'hook-0'");
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("tolerates a ctx without ui (notification guard never throws)", async () => {
+    const booted = await bootWithHooks([
+      { event: "turn_end", script: 'print ({setThinkingLevel: "low"} | to json)' },
+    ]);
+    const { mock } = booted;
+    try {
+      // A ctx with no ui: every notify must be silently skipped, never throw.
+      const ctxNoUi = { ...createMockCtx(booted.root, mock.notified), ui: undefined } as unknown as ExtensionContext;
+      const result = await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctxNoUi);
+      expect(result).toBeUndefined();
+      // The directive was still applied even though no notification was possible.
+      expect(mock.thinkingCalls).toEqual(["low"]);
+      expect(mock.notified).toHaveLength(0);
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
 });

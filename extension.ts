@@ -40,6 +40,14 @@
  *   result combination, so it never leaks into combined result payloads
  * - Empty script output is a no-op; script failures are logged and treated
  *   as no-op (fail-open)
+ * - Every hook script execution emits exactly one user-visible line via
+ *   ctx.ui.notify (Pi runs in a TUI, so console output is not the
+ *   visibility channel): an "info" line for a success (listing the
+ *   directive keys applied, with the setThinkingLevel value), a no-op,
+ *   a contributed result, or a chain-stop; a "warning" line for a
+ *   failure (timeout, non-zero exit, invalid JSON). The notify call is
+ *   optional-chained and try/catch-wrapped, so a missing ctx.ui never
+ *   crashes the fail-open hook chain.
  *
  * Live reload:
  * - The skills tree is watched with fs.watch; changed .md files re-register
@@ -148,6 +156,23 @@ function logFailure(message: string, ctx?: ExtensionContext): void {
   }
 }
 
+/**
+ * Emit one user-visible line to the TUI. Best-effort: `ctx.ui` may be
+ * absent in some contexts, so the call is optional-chained and wrapped in
+ * a try/catch — a notification must never crash the fail-open hook chain.
+ */
+function notifyUser(
+  ctx: ExtensionContext | undefined,
+  message: string,
+  type: "info" | "warning",
+): void {
+  try {
+    ctx?.ui?.notify(message, type);
+  } catch {
+    // Notification is best-effort; a failed notify must not break hooks.
+  }
+}
+
 function teardownStale(state: BridgeState, ctx?: ExtensionContext): void {
   if (state.closed) {
     return;
@@ -212,8 +237,12 @@ function buildHookPayload(eventObj: unknown, ctx: ExtensionContext): string {
 }
 
 interface HookStepResult {
-  /** True when the hook contributed nothing (fail-open / no-op). */
-  skip: boolean;
+  /**
+   * How the hook's output resolved: `failure` (timeout / non-zero exit /
+   * invalid JSON — fail-open, no contribution), `noop` (empty stdout), or
+   * `ok` (a valid JSON object).
+   */
+  status: "failure" | "noop" | "ok";
   value: Record<string, unknown> | undefined;
 }
 
@@ -230,36 +259,33 @@ function processHookOutput(
 ): HookStepResult {
   const label = `scripting-bridge: hook '${hook.name}' (${event})`;
   if (res.timedOut) {
-    logFailure(`${label} timed out after ${hook.timeoutMs}ms`, ctx);
-    return { skip: true, value: undefined };
+    logFailure(`${label}: timed out`, ctx);
+    return { status: "failure", value: undefined };
   }
   if (res.code !== 0) {
-    logFailure(
-      `${label} failed with exit code ${res.code}${res.stderr ? `: ${res.stderr.trim()}` : ""}`,
-      ctx,
-    );
-    return { skip: true, value: undefined };
+    logFailure(`${label}: failed (exit ${res.code})`, ctx);
+    return { status: "failure", value: undefined };
   }
 
   const out = res.stdout.trim();
   if (out.length === 0) {
-    return { skip: true, value: undefined }; // empty output = no-op
+    return { status: "noop", value: undefined }; // empty output = no-op
   }
 
   let value: unknown;
   try {
     value = JSON.parse(out);
   } catch {
-    logFailure(`${label} produced invalid JSON on stdout`, ctx);
-    return { skip: true, value: undefined };
+    logFailure(`${label}: invalid JSON`, ctx);
+    return { status: "failure", value: undefined };
   }
 
   if (typeof value !== "object" || value === null) {
-    logFailure(`${label} stdout JSON must be an object`, ctx);
-    return { skip: true, value: undefined };
+    logFailure(`${label}: invalid JSON`, ctx);
+    return { status: "failure", value: undefined };
   }
 
-  return { skip: false, value: value as Record<string, unknown> };
+  return { status: "ok", value: value as Record<string, unknown> };
 }
 
 /**
@@ -353,6 +379,44 @@ function applySendMessageDirective(
   return rest;
 }
 
+/**
+ * Apply both directive helpers in order (setThinkingLevel then
+ * sendMessage), stripping the directive keys from the value. Returns the
+ * keys that were present in the hook's output (for the visibility line)
+ * plus the directive-free value that flows into result combination.
+ */
+function applyDirectives(
+  pi: ExtensionAPI,
+  state: BridgeState,
+  hook: DiscoveredHook,
+  event: BridgeableEvent,
+  value: Record<string, unknown>,
+  ctx: ExtensionContext,
+): { applied: { setThinkingLevel: string | undefined; sendMessage: boolean }; rest: Record<string, unknown> } {
+  const applied = {
+    setThinkingLevel:
+      "setThinkingLevel" in value ? String(value.setThinkingLevel) : undefined,
+    sendMessage: "sendMessage" in value,
+  };
+  const afterThinking = applyThinkingLevelDirective(
+    pi,
+    state,
+    hook,
+    event,
+    value,
+    ctx,
+  );
+  const rest = applySendMessageDirective(
+    pi,
+    state,
+    hook,
+    event,
+    afterThinking,
+    ctx,
+  );
+  return { applied, rest };
+}
+
 async function runEventHooks(
   pi: ExtensionAPI,
   state: BridgeState,
@@ -370,6 +434,7 @@ async function runEventHooks(
     (eventObj as Record<string, unknown> | undefined) ?? undefined;
   let acc: unknown;
   let stop = false;
+  let stoppedAfter: string | undefined;
 
   for (const hook of hooks) {
     if (stop) break;
@@ -382,20 +447,56 @@ async function runEventHooks(
     });
 
     const step = processHookOutput(hook, event, res, ctx);
-    if (step.skip) {
+    if (step.status === "failure") {
+      continue; // failure already surfaced a visible warning via logFailure
+    }
+
+    const label = `scripting-bridge: hook '${hook.name}' (${event})`;
+    if (step.status === "noop") {
+      notifyUser(ctx, `${label}: no-op`, "info");
       continue;
     }
-    const value = applySendMessageDirective(
+
+    // A valid JSON object: apply the directives, report what the hook did,
+    // and let the directive-free value flow into result combination.
+    const { applied, rest } = applyDirectives(
       pi,
       state,
       hook,
       event,
-      applyThinkingLevelDirective(pi, state, hook, event, step.value!, ctx),
+      step.value!,
       ctx,
     );
-    const outcome = combineResult(event, acc, value, sanitizedEvent);
+    const parts: string[] = [];
+    if (applied.setThinkingLevel !== undefined) {
+      parts.push(`setThinkingLevel=${applied.setThinkingLevel}`);
+    }
+    if (applied.sendMessage) {
+      parts.push("sendMessage");
+    }
+    if (Object.keys(rest).length > 0) {
+      parts.push("result applied");
+    }
+    notifyUser(
+      ctx,
+      `${label}: ${parts.length > 0 ? parts.join(", ") : "no-op"}`,
+      "info",
+    );
+
+    const outcome = combineResult(event, acc, rest, sanitizedEvent);
     acc = outcome.value;
+    if (outcome.stop && !stop) {
+      stoppedAfter = hook.name;
+    }
     stop = outcome.stop;
+  }
+
+  if (stop && stoppedAfter !== undefined) {
+    notifyUser(
+      ctx,
+      `scripting-bridge: event '${event}': chain stopped after '${stoppedAfter}'`,
+      "info",
+    );
   }
 
   return acc;
