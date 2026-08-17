@@ -340,6 +340,35 @@ beforeAll(async () => {
     ].join("\n"),
   );
 
+  // A tool whose command carries a trailing positional token (after the
+  // script path). The bridge must forward that token to the script as argv.
+  writeScript(
+    "demo/scripts/arg-echo.nu",
+    [
+      "def main [...cli] {",
+      "    let payload = (^cat | from json)",
+      "    let out = {",
+      '        content: [{type: "text", text: $"args=($cli | str join ',') task=($payload.params.task)"}]',
+      "        details: {args: $cli, task: $payload.params.task}",
+      "    }",
+      "    print ($out | to json)",
+      "}",
+    ].join("\n"),
+  );
+  writeMd(
+    "demo/tools/arg-echo-tool.md",
+    [
+      "name: arg-echo-tool",
+      "type: tool",
+      "description: Fixture that echoes its trailing command args as positional argv",
+      `command: ${join(demoDir, "scripts/arg-echo.nu")} career-manager`,
+      "parameters:",
+      "  task:",
+      "    type: string",
+      "    required: true",
+    ].join("\n"),
+  );
+
   // --- hook fixtures ------------------------------------------------------
 
   writeScript(
@@ -732,6 +761,7 @@ describe("scripting-bridge", () => {
     const { mock } = await startBridge((m) => m.toolsByName.has("hello"));
 
     expect([...mock.toolsByName.keys()].sort()).toEqual([
+      "arg-echo-tool",
       "bad-exit",
       "bad-json",
       "hello",
@@ -809,6 +839,25 @@ describe("scripting-bridge", () => {
     };
     expect(result.content[0].text).toBe("agent ran: do the thing");
     expect(result.details.task).toBe("do the thing");
+    shutdownAll(mock);
+  });
+
+  it("forwards trailing command tokens as positional args to the script", async () => {
+    const { mock, ctx } = await startBridge((m) => m.toolsByName.has("arg-echo-tool"));
+
+    const result = (await runTool(
+      mock,
+      "arg-echo-tool",
+      "call-args",
+      { task: "carry the arg" },
+      ctx,
+    )) as {
+      content: { text: string }[];
+      details: { args: string[]; task: string };
+    };
+    expect(result.details.args).toEqual(["career-manager"]);
+    expect(result.details.task).toBe("carry the arg");
+    expect(result.content[0].text).toBe("args=career-manager task=carry the arg");
     shutdownAll(mock);
   });
 

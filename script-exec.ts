@@ -18,6 +18,8 @@ export interface RunScriptOptions {
   timeoutMs: number;
   signal?: AbortSignal;
   cwd?: string;
+  /** Positional arguments forwarded to the script (trailing `command` tokens). */
+  args?: string[];
 }
 
 export function runScript(
@@ -31,7 +33,7 @@ export function runScript(
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
 
-    const child = spawn(scriptPath, [], {
+    const child = spawn(scriptPath, opts.args ?? [], {
       cwd: opts.cwd ?? process.cwd(),
       stdio: ["pipe", "pipe", "pipe"],
     });

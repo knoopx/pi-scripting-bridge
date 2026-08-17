@@ -47,6 +47,7 @@ export function executeTool(
     timeoutMs: toolTimeoutMs,
     signal,
     cwd: ctx?.cwd,
+    args: def.args,
   }).then((res) => {
     if (res.timedOut) {
       return toolErrorResult(def.name, `timed out after ${toolTimeoutMs}ms`, res);

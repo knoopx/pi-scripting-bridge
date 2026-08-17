@@ -69,13 +69,17 @@ function extractYamlFrontmatter(content: string): { yaml: string } | undefined {
 }
 
 export type ResolvedScript =
-  | { ok: true; scriptPath: string }
+  | { ok: true; scriptPath: string; args: string[] }
   | { ok: false; error: string };
 
 /**
  * Validate a skill's `command` frontmatter value and resolve it to an
- * executable file path. Absolute paths are used as-is; relative paths
- * resolve against the skill file's own directory (never the process cwd).
+ * executable file path plus trailing argument tokens. `command` is a single
+ * shell-style string: the first whitespace-delimited token is the script
+ * path (absolute, or relative against the skill file's own directory — never
+ * the process cwd) and any remaining tokens are forwarded to the script as
+ * positional arguments (e.g. `command: ./spawn-agent.nu career-manager`
+ * spawns the script with argv `["career-manager"]`).
  */
 export async function resolveScriptCommand(
   mdPath: string,
@@ -85,9 +89,13 @@ export async function resolveScriptCommand(
     return { ok: false, error: "missing command" };
   }
 
-  const scriptPath = isAbsolute(command)
-    ? command
-    : resolve(dirname(mdPath), command);
+  const tokens = command.trim().split(/\s+/);
+  const rawPath = tokens[0];
+  const args = tokens.slice(1);
+
+  const scriptPath = isAbsolute(rawPath)
+    ? rawPath
+    : resolve(dirname(mdPath), rawPath);
   try {
     const st = await stat(scriptPath);
     if (!st.isFile()) {
@@ -100,7 +108,7 @@ export async function resolveScriptCommand(
     return { ok: false, error: `command is not executable: ${scriptPath}` };
   }
 
-  return { ok: true, scriptPath };
+  return { ok: true, scriptPath, args };
 }
 
 async function isExecutable(path: string): Promise<boolean> {

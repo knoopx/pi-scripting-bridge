@@ -26,6 +26,8 @@ export interface DiscoveredTool {
   description: string;
   parameters: Record<string, ShellToolProperty>;
   scriptPath: string;
+  /** Positional args forwarded to the script (trailing tokens of `command`). */
+  args: string[];
   defaults: Record<string, unknown>;
   /** Per-tool timeout in ms; 0 = no timeout (frontmatter `timeout`). */
   timeoutMs: number;
@@ -45,6 +47,8 @@ export interface DiscoveredHook {
   event: BridgeableEvent;
   timeoutMs: number;
   scriptPath: string;
+  /** Positional args forwarded to the hook script (trailing `command` tokens). */
+  args: string[];
   fingerprint: string;
 }
 
@@ -136,6 +140,7 @@ async function parseToolSkill(mdPath: string): Promise<{
       description: raw.description,
       parameters,
       scriptPath: script.scriptPath,
+      args: script.args,
       defaults: collectDefaults(parameters),
       timeoutMs: timeout ?? TOOL_TIMEOUT_MS,
       fingerprint: `${hashString(file.content)}:${script.scriptPath}`,
@@ -247,6 +252,7 @@ async function parseHookSkill(
       event: event as BridgeableEvent,
       timeoutMs: timeout,
       scriptPath: script.scriptPath,
+      args: script.args,
       fingerprint: `${hashString(file.content)}:${script.scriptPath}`,
     },
     error: null,

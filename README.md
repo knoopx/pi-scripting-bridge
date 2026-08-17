@@ -250,7 +250,7 @@ def main [] {
     let home = ($nu.home-dir)
     let spawn = ($home | path join ".pi" "agent" "skills" "orchestration" "scripts" "spawn-agent.nu")
     let system_md = ($home | path join ".pi" "agent" "skills" "meta" "agents" "content-authoring.md")
-    let res = (^$spawn --agent content-authoring --task $task --tools "read,write,edit,bash,web-fetch,duckdb-eval,python-eval" --system-prompt $system_md | complete)
+    let res = (^$spawn --agent content-authoring --task $task --tools "read,write,edit,bash,fetch-web,duckdb-eval,python-eval" --system-prompt $system_md | complete)
     if ($res.exit_code != 0) {
         let err = ($res.stderr | str trim)
         let text = if $err != "" { $"[error] spawn-agent exited with code ($res.exit_code): ($err)" } else { $"[error] spawn-agent exited with code ($res.exit_code)" }
@@ -269,7 +269,7 @@ def main [] {
 Produces: registered as a tool named `content-authoring` with `timeout: 0`
 (disables the timeout, so the wrapper can run a full agent session);
 invoking it with `task: "..."` spawns `spawn-agent.nu --agent
-content-authoring --task <task> --tools read,write,edit,bash,web-fetch,
+content-authoring --task <task> --tools read,write,edit,bash,fetch-web,
 duckdb-eval,python-eval --system-prompt content-authoring.md` and returns
 the spawned agent's last text response as an AgentToolResult.
 

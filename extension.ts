@@ -277,6 +277,7 @@ async function runEventHooks(
       timeoutMs: hook.timeoutMs,
       signal: ctx.signal,
       cwd: ctx.cwd,
+      args: hook.args,
     });
 
     const step = processHookOutput(hook, event, res, ctx);
