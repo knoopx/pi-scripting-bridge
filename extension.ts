@@ -15,6 +15,14 @@
  *   {"toolCallId", "params"} (validated params, defaults applied) and maps
  *   the stdout JSON onto AgentToolResult (`content` required, `details`
  *   defaults to {}, optional `terminate`/`addedToolNames`)
+ * - A tool result may carry a top-level `terminateSession` directive whose
+ *   value is the exact boolean `true`; the bridge applies it in-process via
+ *   ctx.shutdown() ("Gracefully shutdown pi and exit") and strips the key so
+ *   it never reaches the returned AgentToolResult. When the directive fires,
+ *   a visibility line is appended to the result content and an info
+ *   notification is emitted, so the shutdown is never a silent exit. Any
+ *   value other than the boolean `true` is invalid: the directive is ignored
+ *   (no shutdown) and the normal result is kept
  * - Non-zero exit or invalid stdout JSON produces an error result with the
  *   script stderr surfaced in `content`; tool scripts run with no timeout
  *   (long-running scripts such as delegation wrappers must not be killed)

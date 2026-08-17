@@ -9,6 +9,19 @@ import type { DiscoveredTool } from "./discovery.js";
 import type { ScriptExecResult } from "./script-exec.js";
 import { runScript } from "./script-exec.js";
 
+/**
+ * User-visible line appended to a tool result when its `terminateSession`
+ * directive is applied, so the shutdown is never a silent exit.
+ */
+const TERMINATE_SESSION_NOTICE =
+  "scripting-bridge: terminateSession directive applied (pi shutdown initiated)";
+
+/** True when an error is the SDK's staleness assertion (context replaced). */
+function isStaleError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.toLowerCase().includes("stale");
+}
+
 function buildToolPayload(
   def: DiscoveredTool,
   toolCallId: string,
@@ -52,13 +65,14 @@ export function executeTool(
     if (res.code !== 0) {
       return toolErrorResult(def.name, `exited with code ${res.code}`, res);
     }
-    return mapToolOutput(def.name, res);
+    return mapToolOutput(def.name, res, ctx);
   });
 }
 
 function mapToolOutput(
   name: string,
   res: ScriptExecResult,
+  ctx: ExtensionContext | undefined,
 ): AgentToolResult<unknown> {
   const trimmed = res.stdout.trim();
   if (trimmed.length === 0) {
@@ -108,7 +122,64 @@ function mapToolOutput(
       (n): n is string => typeof n === "string",
     );
   }
+
+  // terminateSession directive: honored only when the top-level key is the
+  // exact boolean `true`. The key is never copied into the result (content,
+  // details, terminate and addedToolNames are the only mapped fields), so it
+  // is structurally stripped and cannot leak to the LLM. Any other value is
+  // invalid: the directive is ignored (no shutdown) and the normal result is
+  // kept.
+  if (p.terminateSession === true) {
+    applyTerminateSession(name, ctx, result);
+  }
   return result;
+}
+
+/**
+ * Apply the tool's `terminateSession` directive: append the user-visible
+ * notice to the result content, call ctx.shutdown() in-process (a stale
+ * context is a silent no-op; any other error is surfaced as a warning and the
+ * result still returns, fail-open), and notify best-effort. The directive key
+ * never reaches the returned result, so the LLM only sees the visibility line.
+ */
+function applyTerminateSession(
+  name: string,
+  ctx: ExtensionContext | undefined,
+  result: AgentToolResult<unknown>,
+): void {
+  // Make the execution visible to the agent: the notice is appended to the
+  // result content so the termination is never a silent exit.
+  result.content.push({ type: "text", text: TERMINATE_SESSION_NOTICE });
+
+  try {
+    ctx?.shutdown();
+  } catch (err) {
+    if (isStaleError(err)) {
+      // A stale context can no longer honor the shutdown request; the instance
+      // is already terminal. Fail-open: the result still returns.
+      return;
+    }
+    const message = `scripting-bridge: tool '${name}' terminateSession failed: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    console.error(message);
+    try {
+      ctx?.ui?.notify(message, "warning");
+    } catch {
+      // Notification is best-effort.
+    }
+    return;
+  }
+
+  // Best-effort info notification (ui may be absent; never throw, fail-open).
+  try {
+    ctx?.ui?.notify(
+      `scripting-bridge: tool '${name}': terminateSession applied`,
+      "info",
+    );
+  } catch {
+    // Notification is best-effort.
+  }
 }
 
 function isValidContent(content: unknown): content is {

@@ -140,7 +140,11 @@ function createMockPi(): MockPi {
   return mock;
 }
 
-function createMockCtx(cwd: string, notified?: { msg: string; type?: string }[]): ExtensionContext {
+function createMockCtx(
+  cwd: string,
+  notified?: { msg: string; type?: string }[],
+  shutdown?: () => void,
+): ExtensionContext {
   return {
     ui: {
       notify: (msg: string, type?: "info" | "warning" | "error") => {
@@ -176,7 +180,7 @@ function createMockCtx(cwd: string, notified?: { msg: string; type?: string }[])
     signal: undefined,
     abort: () => {},
     hasPendingMessages: () => false,
-    shutdown: () => {},
+    shutdown: shutdown ?? (() => {}),
     getContextUsage: () => ({ tokens: 100, contextWindow: 200, percent: 50 }),
     compact: () => {},
     getSystemPrompt: () => "test system prompt",
@@ -1345,6 +1349,61 @@ describe("scripting-bridge", () => {
     rmSync(booted.root, { recursive: true, force: true });
   }
 
+  /**
+   * Boot the bridge against an ISOLATED skills root (env override) containing
+   * only the given tool fixtures, and wait for the tools to be registered.
+   */
+  async function bootWithTools(tools: {
+    name: string;
+    script: string;
+  }[]): Promise<{
+    mock: MockPi;
+    ctx: ExtensionContext;
+    root: string;
+    savedRoot: string | undefined;
+  }> {
+    const root = mkdtempSync(join(tmpdir(), "scripting-bridge-tool-"));
+    const savedRoot = process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT;
+    process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT = root;
+    const toolsDir = join(root, "tools");
+    mkdirSync(toolsDir, { recursive: true });
+    for (let i = 0; i < tools.length; i++) {
+      const spec = tools[i];
+      const scriptPath = join(toolsDir, `tool-${i}.nu`);
+      writeFileSync(scriptPath, `#!/usr/bin/env nu\n${spec.script}\n`);
+      chmodSync(scriptPath, 0o755);
+      writeFileSync(
+        join(toolsDir, `tool-${i}.md`),
+        [
+          "---",
+          `name: ${spec.name}`,
+          "type: tool",
+          `command: ${scriptPath}`,
+          "description: terminateSession fixture",
+          "---",
+          "",
+        ].join("\n"),
+      );
+    }
+    const mock = createMockPi();
+    try {
+      await extensionModule!.default(mock.api);
+      const ctx = createMockCtx(root, mock.notified);
+      fireEvent(
+        mock,
+        "session_start",
+        { type: "session_start", reason: "startup" },
+        ctx,
+      );
+      await waitFor(() => tools.every((t) => mock.toolsByName.has(t.name)));
+      return { mock, ctx, root, savedRoot };
+    } catch (err) {
+      process.env.PI_SCRIPTING_BRIDGE_SKILLS_ROOT = savedRoot;
+      rmSync(root, { recursive: true, force: true });
+      throw err;
+    }
+  }
+
   it("applies a hook setThinkingLevel directive on a no-result event exactly once", async () => {
     const booted = await bootWithHooks([
       { event: "turn_end", script: 'print ({setThinkingLevel: "low"} | to json)' },
@@ -1641,6 +1700,119 @@ describe("scripting-bridge", () => {
       // The directive was still applied even though no notification was possible.
       expect(mock.thinkingCalls).toEqual(["low"]);
       expect(mock.notified).toHaveLength(0);
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  // ---------------------------------------------------------------------
+  // terminateSession directive (tool path)
+  // ---------------------------------------------------------------------
+
+  it("applies a tool terminateSession=true directive (shutdown once, key stripped, visibility line)", async () => {
+    const booted = await bootWithTools([
+      {
+        name: "terminate-tool",
+        script:
+          'print ({content: [{type: "text", text: "Session terminated."}], terminateSession: true} | to json)',
+      },
+    ]);
+    const { mock, root } = booted;
+    let shutdownCalls = 0;
+    const ctx = createMockCtx(root, mock.notified, () => {
+      shutdownCalls++;
+    });
+    try {
+      const result = (await runTool(
+        mock,
+        "terminate-tool",
+        "call-term",
+        {},
+        ctx,
+      )) as {
+        content: { type: string; text: string }[];
+        details: Record<string, unknown>;
+      };
+      // ctx.shutdown called exactly once.
+      expect(shutdownCalls).toBe(1);
+      // The directive key is stripped: absent from details and the result.
+      expect(result.details).not.toHaveProperty("terminateSession");
+      expect(result).not.toHaveProperty("terminateSession");
+      // The script's own content is preserved and the visibility line is appended.
+      const texts = result.content.map((c) => c.text);
+      expect(texts).toContain("Session terminated.");
+      expect(texts).toContain(
+        "scripting-bridge: terminateSession directive applied (pi shutdown initiated)",
+      );
+      // A best-effort info notification was emitted.
+      const line = mock.notified.find((n) =>
+        n.msg.includes("terminateSession applied"),
+      );
+      expect(line).toBeDefined();
+      expect(line!.type).toBe("info");
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("ignores a non-boolean tool terminateSession value (no shutdown, result intact)", async () => {
+    const booted = await bootWithTools([
+      {
+        name: "terminate-invalid",
+        script:
+          'print ({content: [{type: "text", text: "ok"}], terminateSession: "yes"} | to json)',
+      },
+    ]);
+    const { mock, root } = booted;
+    let shutdownCalls = 0;
+    const ctx = createMockCtx(root, mock.notified, () => {
+      shutdownCalls++;
+    });
+    try {
+      const result = (await runTool(
+        mock,
+        "terminate-invalid",
+        "call-inv",
+        {},
+        ctx,
+      )) as {
+        content: { type: string; text: string }[];
+      };
+      // The directive was ignored: no shutdown, no visibility line.
+      expect(shutdownCalls).toBe(0);
+      expect(result.content.map((c) => c.text)).toEqual(["ok"]);
+    } finally {
+      cleanupBooted(booted);
+    }
+  }, 8_000);
+
+  it("does not call shutdown when a tool result has no terminateSession key", async () => {
+    const booted = await bootWithTools([
+      {
+        name: "plain-tool",
+        script:
+          'print ({content: [{type: "text", text: "plain ok"}], details: {x: 1}} | to json)',
+      },
+    ]);
+    const { mock, root } = booted;
+    let shutdownCalls = 0;
+    const ctx = createMockCtx(root, mock.notified, () => {
+      shutdownCalls++;
+    });
+    try {
+      const result = (await runTool(
+        mock,
+        "plain-tool",
+        "call-plain",
+        {},
+        ctx,
+      )) as {
+        content: { type: string; text: string }[];
+        details: Record<string, unknown>;
+      };
+      expect(shutdownCalls).toBe(0);
+      expect(result.content.map((c) => c.text)).toEqual(["plain ok"]);
+      expect(result.details).toEqual({ x: 1 });
     } finally {
       cleanupBooted(booted);
     }
