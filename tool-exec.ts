@@ -4,7 +4,10 @@
  * AgentToolResult. Non-zero exit or invalid stdout JSON produces an error
  * result with the script stderr surfaced in `content`.
  */
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import type { DiscoveredTool } from "./discovery.js";
 import type { ScriptExecResult } from "./script-exec.js";
 import { runScript } from "./script-exec.js";
@@ -86,11 +89,7 @@ function mapToolOutput(
     return toolErrorResult(name, "produced invalid JSON on stdout", res);
   }
 
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed)
-  ) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return toolErrorResult(
       name,
       "stdout JSON must be an object mapping onto AgentToolResult",
@@ -152,7 +151,8 @@ function applyTerminateSession(
   result.content.push({ type: "text", text: TERMINATE_SESSION_NOTICE });
 
   try {
-    ctx?.shutdown();
+    // NOTE: ctx.shutdown(); is not the right approach, doesn't immediately terminate the session and the agent gets another turn to reply with another random gibberish message that misses the full final response details
+    process.exit(0);
   } catch (err) {
     if (isStaleError(err)) {
       // A stale context can no longer honor the shutdown request; the instance
