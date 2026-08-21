@@ -48,14 +48,16 @@
  *   result combination, so it never leaks into combined result payloads
  * - Empty script output is a no-op; script failures are logged and treated
  *   as no-op (fail-open)
- * - Every hook script execution emits exactly one user-visible line via
+ * - Every hook script execution MAY emit exactly one user-visible line via
  *   ctx.ui.notify (Pi runs in a TUI, so console output is not the
- *   visibility channel): an "info" line for a success (listing the
- *   directive keys applied, with the setThinkingLevel value), a no-op,
- *   a contributed result, or a chain-stop; a "warning" line for a
- *   failure (timeout, non-zero exit, invalid JSON). The notify call is
- *   optional-chained and try/catch-wrapped, so a missing ctx.ui never
- *   crashes the fail-open hook chain.
+ *   visibility channel): an "info" line listing the directive keys applied,
+ *   with the setThinkingLevel value, plus whether a result was contributed;
+ *   a chain-stop notice when a hook stops the chain; and a "warning" line for
+ *   a failure (timeout, non-zero exit, invalid JSON). Empty stdout (a noop)
+ *   and a valid-but-empty object with no directives carry no meaningful
+ *   change, so the bridge stays silent — no "no-op" toast is shown. The
+ *   notify call is optional-chained and try/catch-wrapped, so a missing
+ *   ctx.ui never crashes the fail-open hook chain.
  *
  * Live reload:
  * - The skills tree is watched with fs.watch; changed .md files re-register
@@ -459,12 +461,14 @@ async function runEventHooks(
       continue; // failure already surfaced a visible warning via logFailure
     }
 
-    const label = `scripting-bridge: hook '${hook.name}' (${event})`;
-    if (step.status === "noop") {
-      notifyUser(ctx, `${label}: no-op`, "info");
+    // Fail-open already surfaced any failure as a warning in processHookOutput.
+    // An empty-stdout noop means the hook changed nothing: stay silent so the
+    // TUI is not spammed with "no-op" toasts.
+    if (step.status !== "ok") {
       continue;
     }
 
+    const label = `scripting-bridge: hook '${hook.name}' (${event})`;
     // A valid JSON object: apply the directives, report what the hook did,
     // and let the directive-free value flow into result combination.
     const { applied, rest } = applyDirectives(
@@ -485,11 +489,11 @@ async function runEventHooks(
     if (Object.keys(rest).length > 0) {
       parts.push("result applied");
     }
-    notifyUser(
-      ctx,
-      `${label}: ${parts.length > 0 ? parts.join(", ") : "no-op"}`,
-      "info",
-    );
+    // No directive applied and nothing contributed: this hook produced no
+    // meaningful change, so stay silent instead of emitting a "no-op" toast.
+    if (parts.length > 0) {
+      notifyUser(ctx, `${label}: ${parts.join(", ")}`, "info");
+    }
 
     const outcome = combineResult(event, acc, rest, sanitizedEvent);
     acc = outcome.value;

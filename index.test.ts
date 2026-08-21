@@ -1599,7 +1599,7 @@ describe("scripting-bridge", () => {
     }
   }, 8_000);
 
-  it("emits an info no-op notification for empty hook output", async () => {
+  it("stays silent on empty hook output (no no-op toast)", async () => {
     const booted = await bootWithHooks([
       {
         event: "turn_end",
@@ -1611,10 +1611,8 @@ describe("scripting-bridge", () => {
     try {
       const result = await fireFirstHandler(mock, "turn_end", { type: "turn_end" }, ctx);
       expect(result).toBeUndefined();
-      const line = mock.notified.find((n) => n.msg.includes("no-op"));
-      expect(line).toBeDefined();
-      expect(line!.type).toBe("info");
-      expect(line!.msg).toContain("hook 'hook-0' (turn_end)");
+      // Empty stdout means nothing changed: no UI notification is emitted.
+      expect(mock.notified.filter((n) => n.type === "info")).toHaveLength(0);
     } finally {
       cleanupBooted(booted);
     }
