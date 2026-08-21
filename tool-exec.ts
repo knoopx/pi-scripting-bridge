@@ -11,6 +11,7 @@ import type {
 import type { DiscoveredTool } from "./discovery.js";
 import type { ScriptExecResult } from "./script-exec.js";
 import { runScript } from "./script-exec.js";
+import { buildContextPayload } from "./hook-payload.js";
 
 /**
  * User-visible line appended to a tool result when its `terminateSession`
@@ -29,11 +30,16 @@ function buildToolPayload(
   def: DiscoveredTool,
   toolCallId: string,
   params: Record<string, unknown>,
+  ctx: ExtensionContext | undefined,
 ): string {
-  return JSON.stringify({
+  const payload: Record<string, unknown> = {
     toolCallId,
     params: applyDefaults(def, params),
-  });
+  };
+  if (ctx) {
+    payload.context = buildContextPayload(ctx);
+  }
+  return JSON.stringify(payload);
 }
 
 function applyDefaults(
@@ -56,7 +62,7 @@ export function executeTool(
   signal: AbortSignal | undefined,
   ctx: ExtensionContext | undefined,
 ): Promise<AgentToolResult<unknown>> {
-  const payload = buildToolPayload(def, toolCallId, params);
+  const payload = buildToolPayload(def, toolCallId, params, ctx);
 
   return runScript(def.scriptPath, payload, {
     // Tools have no timeout; the script runs to completion.
