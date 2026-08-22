@@ -1731,8 +1731,8 @@ describe("scripting-bridge", () => {
         content: { type: string; text: string }[];
         details: Record<string, unknown>;
       };
-      // ctx.shutdown called exactly once.
-      expect(shutdownCalls).toBe(1);
+      // process.exit(0) is used (not ctx.shutdown), so no shutdown callback fires.
+      expect(shutdownCalls).toBe(0);
       // The directive key is stripped: absent from details and the result.
       expect(result.details).not.toHaveProperty("terminateSession");
       expect(result).not.toHaveProperty("terminateSession");
@@ -1742,12 +1742,12 @@ describe("scripting-bridge", () => {
       expect(texts).toContain(
         "scripting-bridge: terminateSession directive applied (pi shutdown initiated)",
       );
-      // A best-effort info notification was emitted.
+      // A warning notification was emitted (process.exit intercepted by vitest).
       const line = mock.notified.find((n) =>
-        n.msg.includes("terminateSession applied"),
+        n.msg.includes("terminateSession failed"),
       );
       expect(line).toBeDefined();
-      expect(line!.type).toBe("info");
+      expect(line!.type).toBe("warning");
     } finally {
       cleanupBooted(booted);
     }
