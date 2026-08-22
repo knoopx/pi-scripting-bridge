@@ -860,29 +860,26 @@ describe("scripting-bridge", () => {
     shutdownAll(mock);
   });
 
-  it("produces an error result with stderr for non-zero exits", async () => {
+  it("throws for non-zero exits with the stderr surfaced in the message", async () => {
     const { mock, ctx } = await startBridge((m) => m.toolsByName.has("bad-exit"));
 
-    const result = (await runTool(mock, "bad-exit", "call-4", {}, ctx)) as {
-      content: { text: string }[];
-      details: { exitCode: number; error: string };
-    };
-    expect(result.content[0].text).toContain("exited with code 3");
-    expect(result.content[0].text).toContain("boom");
-    expect(result.details.exitCode).toBe(3);
-    expect(result.details.error).toContain("exited with code 3");
+    // The bridge now throws (pi core wraps the throw into an error result
+    // with isError=true); the script stderr is carried in the message.
+    await expect(runTool(mock, "bad-exit", "call-4", {}, ctx)).rejects.toThrow(
+      /exited with code 3/,
+    );
+    await expect(runTool(mock, "bad-exit", "call-4", {}, ctx)).rejects.toThrow(
+      /boom/,
+    );
     shutdownAll(mock);
   });
 
-  it("produces an error result for invalid stdout JSON", async () => {
+  it("throws for invalid stdout JSON", async () => {
     const { mock, ctx } = await startBridge((m) => m.toolsByName.has("bad-json"));
 
-    const result = (await runTool(mock, "bad-json", "call-5", {}, ctx)) as {
-      content: { text: string }[];
-      details: { error: string };
-    };
-    expect(result.content[0].text).toContain("invalid JSON");
-    expect(result.details.error).toContain("invalid JSON");
+    await expect(runTool(mock, "bad-json", "call-5", {}, ctx)).rejects.toThrow(
+      /invalid JSON/,
+    );
     shutdownAll(mock);
   });
 

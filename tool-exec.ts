@@ -1,8 +1,10 @@
 /**
  * Tool execution: build the stdin payload (validated params with defaults
  * applied), run the tool script, and map its stdout JSON onto
- * AgentToolResult. Non-zero exit or invalid stdout JSON produces an error
- * result with the script stderr surfaced in `content`.
+ * AgentToolResult. Non-zero exit, empty stdout, invalid stdout JSON, or
+ * non-object JSON THROW, mirroring the pi `bash` tool so the pi core marks
+ * the result `isError=true` (the message carries the script output plus the
+ * exit-code status).
  */
 import type {
   AgentToolResult,
@@ -72,7 +74,22 @@ export function executeTool(
     args: def.args,
   }).then((res) => {
     if (res.code !== 0) {
-      return toolErrorResult(def.name, `exited with code ${res.code}`, res);
+      const detail = res.stderr.trim() || res.stdout.trim() || "";
+      const status = `Command exited with code ${res.code}`;
+      throw new Error(detail ? `${detail}\n\n${status}` : status);
+    }
+    const trimmed = res.stdout.trim();
+    if (trimmed.length === 0) {
+      throw new Error(`tool '${def.name}' produced no JSON output on stdout`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error(`tool '${def.name}' produced invalid JSON on stdout`);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`tool '${def.name}' stdout JSON must be an object mapping onto AgentToolResult`);
     }
     return mapToolOutput(def.name, res, ctx);
   });
@@ -85,31 +102,23 @@ function mapToolOutput(
 ): AgentToolResult<unknown> {
   const trimmed = res.stdout.trim();
   if (trimmed.length === 0) {
-    return toolErrorResult(name, "produced no JSON output on stdout", res);
+    throw new Error(`tool '${name}' produced no JSON output on stdout`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    return toolErrorResult(name, "produced invalid JSON on stdout", res);
+    throw new Error(`tool '${name}' produced invalid JSON on stdout`);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return toolErrorResult(
-      name,
-      "stdout JSON must be an object mapping onto AgentToolResult",
-      res,
-    );
+    throw new Error(`tool '${name}' stdout JSON must be an object mapping onto AgentToolResult`);
   }
 
   const p = parsed as Record<string, unknown>;
   if (!isValidContent(p.content)) {
-    return toolErrorResult(
-      name,
-      "result is missing required 'content' (array of text content)",
-      res,
-    );
+    throw new Error(`tool '${name}' result is missing required 'content' (array of text content)`);
   }
 
   const result: AgentToolResult<unknown> = {
@@ -203,28 +212,4 @@ function isValidContent(content: unknown): content is {
   );
 }
 
-function toolErrorResult(
-  name: string,
-  reason: string,
-  res: ScriptExecResult,
-): AgentToolResult<unknown> {
-  const detail = res.stderr.trim() || res.stdout.trim() || "";
-  return {
-    content: [
-      {
-        type: "text",
-        text: detail
-          ? `scripting-bridge: tool '${name}' ${reason}\n${detail}`
-          : `scripting-bridge: tool '${name}' ${reason}`,
-      },
-    ],
-    details: {
-      error: reason,
-      exitCode: res.code,
-      killed: res.killed,
-      timedOut: res.timedOut,
-      stderr: res.stderr,
-      stdout: res.stdout,
-    },
-  };
-}
+

@@ -23,8 +23,9 @@
  *   notification is emitted, so the shutdown is never a silent exit. Any
  *   value other than the boolean `true` is invalid: the directive is ignored
  *   (no shutdown) and the normal result is kept
- * - Non-zero exit or invalid stdout JSON produces an error result with the
- *   script stderr surfaced in `content`; tool scripts run with no timeout
+ * - Non-zero exit, empty stdout, invalid stdout JSON, or non-object JSON
+ *   THROW, mirroring the pi `bash` tool so the pi core marks the result
+ *   `isError=true`; tool scripts run with no timeout
  *   (long-running scripts such as delegation wrappers must not be killed)
  *
  * Hook bridge:
