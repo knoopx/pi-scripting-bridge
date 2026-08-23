@@ -3,24 +3,29 @@
   "version": "1.0.0",
   "description": "Consolidated Pi extension: bridges type:tool and type:hook skills from the skills tree to Pi tools and event hooks over stdin/stdout JSON payloads",
   "scripts": {
+    "lint": "eslint .",
     "test": "vitest run --coverage",
     "tsc": "tsc --noEmit"
   },
   "type": "module",
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./src/index.ts"
     ]
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.10",
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
     "typebox": "^1.1.38",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.10",
-    "typescript": "^7.0.2",
+    "eslint": "^10.9.1",
+    "typescript": "6",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.10"
   }
 }
