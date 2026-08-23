@@ -9,8 +9,9 @@
     "isolatedModules": true
   },
   "include": [
-    "*.ts",
-    "**/*.ts"
+    "src/**/*.ts",
+    "vitest.config.ts",
+    "eslint.config.ts"
   ],
   "exclude": [
     "node_modules"

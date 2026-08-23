@@ -9,8 +9,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 export interface ScriptExecResult {
   stdout: string;
   stderr: string;
-  code: number;
-  killed: boolean;
+  /** Exit code; null when the child was killed by a signal (SIGTERM/SIGKILL). */
+  code: number | null;
+  /** Set when the child was killed by a signal (SIGTERM/SIGKILL); undefined on normal exit. */
+  signal: string | undefined;
   timedOut: boolean;
 }
 
@@ -48,7 +50,7 @@ export function runScript(
     collectStreams(child, stdoutChunks, stderrChunks);
     writeStdin(child, stdinData);
 
-    const finish = (code: number) => {
+    const finish = (code: number | null, exitSignal?: string) => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) {
@@ -59,7 +61,7 @@ export function runScript(
         stdout: stdoutChunks.join(""),
         stderr: stderrChunks.join(""),
         code,
-        killed: killer.killed,
+        signal: exitSignal,
         timedOut,
       });
     };
@@ -69,11 +71,10 @@ export function runScript(
       finish(127);
     });
 
-    child.on("exit", (code) => finish(code ?? 0));
+    child.on("exit", (code, sig) => finish(code, sig ?? undefined));
   });
 }
 
-/** timeoutMs 0 (or non-positive) disables the timer. */
 function startTimer(
   timeoutMs: number,
   onFire: () => void,
@@ -87,7 +88,6 @@ function startTimer(
  */
 function makeKiller(child: ChildProcessWithoutNullStreams): {
   kill: () => void;
-  killed: boolean;
 } {
   const state = { killed: false };
   const kill = () => {
@@ -100,7 +100,7 @@ function makeKiller(child: ChildProcessWithoutNullStreams): {
       }
     }, 5000).unref();
   };
-  return { kill, get killed() { return state.killed; } };
+  return { kill };
 }
 
 function wireAbort(

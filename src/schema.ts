@@ -49,7 +49,7 @@ export function createParameterSchema(
     if (typeof prop !== "object" || prop === null) {
       continue;
     }
-    const { type: propType, required, ...opts } = prop as ShellToolProperty;
+    const { type: propType, required, ...opts } = prop;
     const build = TYPE_BUILDERS[propType];
     if (build === undefined) {
       return {
@@ -58,7 +58,7 @@ export function createParameterSchema(
       };
     }
 
-    let schema = build(opts as ShellToolOpts);
+    let schema = build(opts);
     if (!required) {
       schema = Type.Optional(schema);
     }

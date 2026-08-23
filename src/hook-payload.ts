@@ -4,6 +4,7 @@
  * payload handed to every hook script.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { safe } from "./safe.js";
 
 /**
  * Strip JSON-hostile values: non-finite numbers become null, circular
@@ -17,10 +18,10 @@ function sanitize(value: unknown, seen: WeakSet<object>): unknown {
     return value;
   }
 
-  if (seen.has(value as object)) {
+  if (seen.has(value)) {
     return undefined;
   }
-  seen.add(value as object);
+  seen.add(value);
 
   if (Array.isArray(value)) {
     return value
@@ -52,14 +53,6 @@ export function serializeForJson(value: unknown): unknown {
 export function buildContextPayload(
   ctx: ExtensionContext,
 ): Record<string, unknown> {
-  const safe = (fn: () => unknown): unknown => {
-    try {
-      return fn();
-    } catch {
-      return null;
-    }
-  };
-
   return {
     cwd: ctx.cwd,
     mode: ctx.mode,

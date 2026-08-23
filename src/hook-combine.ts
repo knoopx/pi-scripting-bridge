@@ -38,6 +38,29 @@ function cancelShortCircuit({ acc, value }: CombineInput): CombineOutcome {
 }
 
 /**
+ * Shared per-key merge scaffold for the field-wise combiners: build the
+ * `acc` record, iterate `keys`, and let `contribute` decide whether and how
+ * to set each key on `merged` (capturing `value` from the caller's scope).
+ * Always returns a non-stopping outcome.
+ */
+function mergePerKey(
+  keys: string[],
+  acc: unknown,
+  contribute: (
+    key: string,
+    a: Record<string, unknown>,
+    merged: Record<string, unknown>,
+  ) => void,
+): CombineOutcome {
+  const a = (acc ?? {}) as Record<string, unknown>;
+  const merged: Record<string, unknown> = {};
+  for (const key of keys) {
+    contribute(key, a, merged);
+  }
+  return { value: merged, stop: false };
+}
+
+/**
  * First-defined wins per key: each listed key is merged as `acc ?? value`
  * only when the incoming value defines it.
  */
@@ -45,14 +68,11 @@ function mergeFirstDefined(
   keys: string[],
   { acc, value }: CombineInput,
 ): CombineOutcome {
-  const a = (acc ?? {}) as Record<string, unknown>;
-  const merged: Record<string, unknown> = {};
-  for (const key of keys) {
+  return mergePerKey(keys, acc, (key, a, merged) => {
     if (value[key] !== undefined) {
       merged[key] = a[key] ?? value[key];
     }
-  }
-  return { value: merged, stop: false };
+  });
 }
 
 /** Arrays accumulate per key. */
@@ -60,9 +80,7 @@ function accumulateArrays(
   keys: string[],
   { acc, value }: CombineInput,
 ): CombineOutcome {
-  const a = (acc ?? {}) as Record<string, unknown>;
-  const merged: Record<string, unknown> = {};
-  for (const key of keys) {
+  return mergePerKey(keys, acc, (key, a, merged) => {
     const parts = [
       ...(Array.isArray(a[key]) ? (a[key] as unknown[]) : []),
       ...(Array.isArray(value[key]) ? (value[key] as unknown[]) : []),
@@ -70,8 +88,7 @@ function accumulateArrays(
     if (parts.length > 0) {
       merged[key] = parts;
     }
-  }
-  return { value: merged, stop: false };
+  });
 }
 
 /** Full-array replacement: chaining means last wins. */
@@ -117,8 +134,7 @@ function combineUserBash({ acc, value }: CombineInput): CombineOutcome {
   if (value.result === undefined) {
     return { value: acc, stop: false };
   }
-  const { operations: _dropped, ...rest } = value;
-  return { value: acc ?? { result: rest.result }, stop: true };
+  return { value: acc ?? { result: value.result }, stop: true };
 }
 
 function combineInput({ acc, value }: CombineInput): CombineOutcome {
@@ -163,7 +179,7 @@ function mergeToolResult(
   const out: Record<string, unknown> = { ...(acc ?? {}) };
   if (Array.isArray(v.content) || Array.isArray(acc?.content)) {
     out.content = [
-      ...(Array.isArray(acc?.content) ? (acc!.content as unknown[]) : []),
+      ...(Array.isArray(acc?.content) ? (acc.content as unknown[]) : []),
       ...(Array.isArray(v.content) ? (v.content as unknown[]) : []),
     ];
   }
@@ -173,7 +189,7 @@ function mergeToolResult(
     !Array.isArray(v.details)
   ) {
     out.details = {
-      ...((out.details as Record<string, unknown> | undefined) ?? {}),
+      ...((out.details) ?? {}),
       ...(v.details as Record<string, unknown>),
     };
   }

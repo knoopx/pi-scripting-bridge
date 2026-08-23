@@ -14,6 +14,7 @@ import type { DiscoveredTool } from "./discovery.js";
 import type { ScriptExecResult } from "./script-exec.js";
 import { runScript } from "./script-exec.js";
 import { buildContextPayload } from "./hook-payload.js";
+import { isContentEntry, isStaleError, logFailure } from "./failure.js";
 
 /**
  * User-visible line appended to a tool result when its `terminateSession`
@@ -21,12 +22,6 @@ import { buildContextPayload } from "./hook-payload.js";
  */
 const TERMINATE_SESSION_NOTICE =
   "scripting-bridge: terminateSession directive applied (pi shutdown initiated)";
-
-/** True when an error is the SDK's staleness assertion (context replaced). */
-function isStaleError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.toLowerCase().includes("stale");
-}
 
 function buildToolPayload(
   def: DiscoveredTool,
@@ -73,6 +68,11 @@ export function executeTool(
     cwd: ctx?.cwd,
     args: def.args,
   }).then((res) => {
+    if (res.code === null) {
+      throw new Error(
+        `tool '${def.name}' was killed (${res.signal}) before emitting JSON`,
+      );
+    }
     if (res.code !== 0) {
       const detail = res.stderr.trim() || res.stdout.trim() || "";
       const status = `Command exited with code ${res.code}`;
@@ -80,7 +80,11 @@ export function executeTool(
     }
     const trimmed = res.stdout.trim();
     if (trimmed.length === 0) {
-      throw new Error(`tool '${def.name}' produced no JSON output on stdout`);
+      const stderr = res.stderr.trim();
+      throw new Error(
+        `tool '${def.name}' produced no JSON output on stdout` +
+          (stderr ? ` (stderr: ${stderr.slice(0, 500)})` : " (no stderr output)"),
+      );
     }
     let parsed: unknown;
     try {
@@ -88,8 +92,14 @@ export function executeTool(
     } catch {
       throw new Error(`tool '${def.name}' produced invalid JSON on stdout`);
     }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw new Error(`tool '${def.name}' stdout JSON must be an object mapping onto AgentToolResult`);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error(
+        `tool '${def.name}' stdout JSON must be an object mapping onto AgentToolResult`,
+      );
     }
     return mapToolOutput(def.name, res, ctx);
   });
@@ -102,7 +112,11 @@ function mapToolOutput(
 ): AgentToolResult<unknown> {
   const trimmed = res.stdout.trim();
   if (trimmed.length === 0) {
-    throw new Error(`tool '${name}' produced no JSON output on stdout`);
+    const stderr = res.stderr.trim();
+    throw new Error(
+      `tool '${name}' produced no JSON output on stdout` +
+        (stderr ? ` (stderr: ${stderr.slice(0, 500)})` : " (no stderr output)"),
+    );
   }
 
   let parsed: unknown;
@@ -113,20 +127,22 @@ function mapToolOutput(
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`tool '${name}' stdout JSON must be an object mapping onto AgentToolResult`);
+    throw new Error(
+      `tool '${name}' stdout JSON must be an object mapping onto AgentToolResult`,
+    );
   }
 
   const p = parsed as Record<string, unknown>;
   if (!isValidContent(p.content)) {
-    throw new Error(`tool '${name}' result is missing required 'content' (array of text content)`);
+    throw new Error(
+      `tool '${name}' result is missing required 'content' (array of text content)`,
+    );
   }
 
   const result: AgentToolResult<unknown> = {
     content: p.content as AgentToolResult<unknown>["content"],
     details:
-      typeof p.details === "object" && p.details !== null
-        ? (p.details as unknown)
-        : {},
+      typeof p.details === "object" && p.details !== null ? p.details : {},
   };
   if (typeof p.terminate === "boolean") {
     result.terminate = p.terminate;
@@ -156,7 +172,7 @@ function mapToolOutput(
  * result still returns, fail-open), and notify best-effort. The directive key
  * never reaches the returned result, so the LLM only sees the visibility line.
  */
-function applyTerminateSession(
+export function applyTerminateSession(
   name: string,
   ctx: ExtensionContext | undefined,
   result: AgentToolResult<unknown>,
@@ -177,39 +193,13 @@ function applyTerminateSession(
     const message = `scripting-bridge: tool '${name}' terminateSession failed: ${
       err instanceof Error ? err.message : String(err)
     }`;
-    console.error(message);
-    try {
-      ctx?.ui?.notify(message, "warning");
-    } catch {
-      // Notification is best-effort.
-    }
+    logFailure(message, ctx);
     return;
-  }
-
-  // Best-effort info notification (ui may be absent; never throw, fail-open).
-  try {
-    ctx?.ui?.notify(
-      `scripting-bridge: tool '${name}': terminateSession applied`,
-      "info",
-    );
-  } catch {
-    // Notification is best-effort.
   }
 }
 
 function isValidContent(content: unknown): content is {
   type: "text" | "image";
 }[] {
-  return (
-    Array.isArray(content) &&
-    content.every(
-      (c) =>
-        typeof c === "object" &&
-        c !== null &&
-        (c as { type?: unknown }).type === "text" &&
-        typeof (c as { text?: unknown }).text === "string",
-    )
-  );
+  return Array.isArray(content) && content.every(isContentEntry);
 }
-
-

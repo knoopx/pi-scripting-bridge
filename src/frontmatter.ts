@@ -4,7 +4,7 @@
  * shape; tool/hook skills all resolve `command` with the same
  * convention (absolute as-is, relative against the skill file's directory).
  */
-import { access, constants, readdir, stat } from "node:fs/promises";
+import { access, constants, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { parse } from "yaml";
