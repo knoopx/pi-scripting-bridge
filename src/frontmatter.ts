@@ -78,8 +78,8 @@ export type ResolvedScript =
  * shell-style string: the first whitespace-delimited token is the script
  * path (absolute, or relative against the skill file's own directory — never
  * the process cwd) and any remaining tokens are forwarded to the script as
- * positional arguments (e.g. `command: ./spawn-agent.nu career-manager`
- * spawns the script with argv `["career-manager"]`).
+ * positional arguments (e.g. `command: ../../meta/tools/agent-spawn.nu duckdb-engineer`
+ * spawns the script with argv `["duckdb-engineer"]`).
  */
 export async function resolveScriptCommand(
   mdPath: string,

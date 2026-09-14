@@ -2,10 +2,11 @@
  * Skill discovery: a single recursive walk of the skills tree in which the
  * frontmatter `type:` field — never the file's directory — decides
  * registration. `type: tool` registers as a bridge tool; `type: hook`
- * registers as an event hook. `type: agent` files are regular tools
- * (invoked via the `spawn-agent` tool); they are outside this extension's
- * auto-registration set because they resolve to the shared `spawn-agent.nu`
- * command rather than a per-skill script.
+ * registers as an event hook. `type: agent` files are agent definitions
+ * (the `SYSTEM.md` under each `<domain>/agents/<name>/`); they are outside
+ * this extension's auto-registration set because they are invoked via the
+ * shared `agent-spawn` tool (`skills/meta/tools/agent-spawn.nu`), which
+ * resolves the agent name to its `SYSTEM.md` — not a per-skill script.
  */
 import { readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";

@@ -75,8 +75,8 @@ describe("scripting-bridge tools", () => {
     expect(mock.toolsByName.has("loose-tool")).toBe(true);
     // The non-tool skill file must not be registered.
     expect(mock.toolsByName.has("not-a-tool")).toBe(false);
-    // type: agent skill files are skipped during tool discovery (agents are
-    // regular tools invoked via the spawn-agent tool).
+    // type: agent skill files are not registered (agent definitions are
+    // invoked via the agent-spawn tool, not bridge-registered).
     expect(mock.toolsByName.has("runner-agent")).toBe(false);
 
     // Parameter schema generation: greeting required, punctuation optional.
