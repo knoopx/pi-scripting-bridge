@@ -38,6 +38,44 @@ function cancelShortCircuit({ acc, value }: CombineInput): CombineOutcome {
 }
 
 /**
+ * True when a hook-supplied compaction result carries the fields pi's
+ * `compact()` path dereferences (summary + firstKeptEntryId). Malformed
+ * payloads are dropped so pi falls back to its default compaction
+ * (fail-open).
+ */
+function isBridgedCompaction(
+  v: unknown,
+): v is Record<string, unknown> {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return false;
+  }
+  const c = v as Record<string, unknown>;
+  return typeof c.summary === "string" && typeof c.firstKeptEntryId === "string";
+}
+
+/**
+ * Cancel short-circuit + first-defined compaction wins. pi's
+ * `SessionBeforeCompactResult` accepts `{ cancel?, compaction? }`: a
+ * hook-supplied compaction result (e.g. snapcompact's `details.snapcompact`
+ * frames) replaces the default LLM summarization. Later hooks can still
+ * cancel after a compaction was contributed.
+ */
+function combineSessionBeforeCompact({ acc, value }: CombineInput): CombineOutcome {
+  if (value.cancel === true) {
+    return { value: { cancel: true }, stop: true };
+  }
+  if (!isBridgedCompaction(value.compaction)) {
+    return { value: acc, stop: false };
+  }
+  const a = (acc ?? {}) as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...a };
+  if (!isBridgedCompaction(a.compaction)) {
+    merged.compaction = value.compaction;
+  }
+  return { value: merged, stop: false };
+}
+
+/**
  * Shared per-key merge scaffold for the field-wise combiners: build the
  * `acc` record, iterate `keys`, and let `contribute` decide whether and how
  * to set each key on `merged` (capturing `value` from the caller's scope).
@@ -212,9 +250,8 @@ const COMBINERS: Partial<Record<BridgeableEvent, Combiner>> = {
       ["skillPaths", "promptPaths", "themePaths"],
       { acc, value, eventObj },
     ),
-  // The bridge exposes only `cancel` (compaction object not bridgeable).
   session_before_switch: cancelShortCircuit,
-  session_before_compact: cancelShortCircuit,
+  session_before_compact: combineSessionBeforeCompact,
   session_before_fork: ({ acc, value, eventObj }) =>
     mergeFirstDefined(["skipConversationRestore"], { acc, value, eventObj }),
   session_before_tree: ({ acc, value, eventObj }) =>
