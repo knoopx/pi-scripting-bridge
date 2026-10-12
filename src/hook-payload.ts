@@ -59,6 +59,7 @@ export function buildContextPayload(
     hasUI: ctx.hasUI,
     sessionManager: buildSessionManagerPayload(ctx, safe),
     model: safe(() => (ctx.model as { id?: string } | undefined)?.id ?? null),
+    thinkingLevel: safe(() => ctx.thinkingLevel ?? null),
     hasSignal: ctx.signal !== undefined && ctx.signal !== null,
     isProjectTrusted: safe(() => ctx.isProjectTrusted()),
     contextUsage: safe(() => ctx.getContextUsage() ?? null),
